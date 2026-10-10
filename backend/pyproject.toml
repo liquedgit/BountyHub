@@ -1,0 +1,8 @@
+[project]
+name = "bountyhub-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["fastapi", "sqlalchemy>=2", "pydantic>=2", "httpx", "pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
