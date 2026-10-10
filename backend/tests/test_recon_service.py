@@ -209,3 +209,129 @@ def test_worker_registers_recon_job():
     from app.worker import WorkerSettings
 
     assert recon_jobs.run_recon_job in WorkerSettings.functions
+
+
+# --- JS crawl, secret scan and AI triage stages ---
+
+from app.ai.base import AIProvider, AIProviderError  # noqa: E402
+from app.recon.fetcher import HttpFetcher  # noqa: E402
+from app.recon.scope import ScopeValidator  # noqa: E402
+
+AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+PAGES = {
+    "https://api.example.com": '<script src="/app.js"></script>',
+    "https://api.example.com/app.js": f'fetch("/api/users"); var k = "{AWS_KEY}";',
+}
+
+
+class FakeFetcher:
+    def __init__(self, pages=None):
+        self.pages, self.calls = PAGES if pages is None else pages, []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        return self.pages.get(url)
+
+
+class FakeAI(AIProvider):
+    name = "fake"
+
+    def __init__(self, error=None):
+        self.error, self.prompts = error, []
+
+    def complete(self, system, prompt):
+        self.prompts.append(prompt)
+        if self.error:
+            raise self.error
+        import json
+
+        return json.dumps([{"id": a["id"], "score": 50, "label": "interesting", "reason": "r"}
+                           for a in json.loads(prompt)])
+
+
+def full_service(db, fetcher=None, ai=None):
+    httpx = FakeTool("httpx", [host("https://api.example.com")])
+    fetcher = fetcher or FakeFetcher()
+    def ai_factory():
+        if ai is None:
+            raise AIProviderError("No AI provider selected")
+        return ai
+
+    return ReconService(db, FakeTool("subfinder"), httpx,
+                        fetcher_factory=lambda scope: fetcher, ai_provider_factory=ai_factory)
+
+
+def test_full_pipeline_stores_all_asset_types_and_orders_stages(db_session, program, monkeypatch):
+    from app.repositories.recon_job import ReconJobRepository
+
+    stages = []
+    orig = ReconJobRepository.set_stage
+    monkeypatch.setattr(ReconJobRepository, "set_stage",
+                        lambda self, job, st: (stages.append(st), orig(self, job, st))[1])
+    ai = FakeAI()
+    svc = full_service(db_session, ai=ai)
+    job = svc.create_job(program.id, ["example.com"])
+    svc.run_job(job.id)
+    db_session.refresh(job)
+
+    assert stages == ["subfinder", "httpx", "js_crawler", "secret_scanner", "triage"]
+    assert job.status == "completed" and job.error is None and job.notes == []
+    assets = svc.list_assets(job.id)
+    assert {a.asset_type for a in assets} == {"host", "endpoint", "secret"}
+    assert any(a.asset_type == "endpoint" and a.value.endswith("/api/users") for a in assets)
+    assert all(a.ai_label == "interesting" for a in assets)
+    assert AWS_KEY not in ai.prompts[0]
+
+
+def test_all_four_asset_types_for_one_job(db_session, program):
+    svc = ReconService(
+        db_session, FakeTool("subfinder", [sub("api.example.com")]),
+        FakeTool("httpx", [host("https://api.example.com")]),
+        fetcher_factory=lambda scope: FakeFetcher(), ai_provider_factory=lambda: FakeAI(),
+    )
+    job = svc.create_job(program.id, ["example.com"])
+    svc.run_job(job.id)
+    assert {a.asset_type for a in svc.list_assets(job.id)} == {
+        "subdomain", "host", "endpoint", "secret"}
+
+
+def test_triage_failure_does_not_fail_job(db_session, program):
+    svc = full_service(db_session, ai=FakeAI(error=AIProviderError("upstream 500")))
+    job = svc.create_job(program.id, ["example.com"])
+    svc.run_job(job.id)
+    db_session.refresh(job)
+    assert job.status == "completed" and job.error is None
+    assert job.notes == ["triage skipped: upstream 500"]
+
+
+def test_unexpected_triage_error_and_no_provider_are_noted(db_session, program):
+    svc = full_service(db_session, ai=FakeAI(error=RuntimeError("boom")))
+    job = svc.create_job(program.id, ["example.com"])
+    svc.run_job(job.id)
+    db_session.refresh(job)
+    assert job.status == "completed" and job.notes == ["triage failed: RuntimeError"]
+
+    svc = full_service(db_session, ai=None)
+    job = svc.create_job(program.id, ["example.com"])
+    svc.run_job(job.id)
+    db_session.refresh(job)
+    assert job.status == "completed" and "No AI provider" in job.notes[0]
+    assert len(svc.list_assets(job.id)) > 0
+
+
+def test_http_fetcher_does_not_follow_out_of_scope_redirect(db_session, program):
+    import httpx as httpx_lib
+
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
+        if request.url.host == "api.example.com":
+            return httpx_lib.Response(302, headers={"location": "https://evil.com/x"})
+        return httpx_lib.Response(200, text="pwned")
+
+    client = httpx_lib.Client(transport=httpx_lib.MockTransport(handler))
+    scope = ScopeValidator(program.scope_rules)
+    fetcher = HttpFetcher(scope, client=client)
+    assert fetcher("https://api.example.com/") is None
+    assert requested == ["https://api.example.com/"]
