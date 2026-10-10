@@ -31,18 +31,18 @@ class ReconJobRepository:
     def get(self, job_id: int) -> ReconJob | None:
         return self._db.get(ReconJob, job_id)
 
-    def list(self, program_id: int | None = None, limit: int = 20) -> list[ReconJob]:
-        stmt = select(ReconJob).order_by(ReconJob.id.desc()).limit(limit)
-        if program_id is not None:
-            stmt = stmt.where(ReconJob.program_id == program_id)
-        return list(self._db.scalars(stmt))
-
     def list_by_program(self, program_id: int) -> list[ReconJob]:
         stmt = (
             select(ReconJob)
             .where(ReconJob.program_id == program_id)
             .order_by(ReconJob.id.desc())
         )
+        return list(self._db.scalars(stmt))
+
+    def list(self, program_id: int | None = None, limit: int = 20) -> list[ReconJob]:
+        stmt = select(ReconJob).order_by(ReconJob.id.desc()).limit(limit)
+        if program_id is not None:
+            stmt = stmt.where(ReconJob.program_id == program_id)
         return list(self._db.scalars(stmt))
 
     def mark_running(self, job: ReconJob, stage: str | None = None) -> ReconJob:
