@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from collections.abc import Iterable
 from urllib.parse import urljoin, urlsplit
 
 from app.recon.base import AssetType, Fetcher, ReconAssetResult, ReconTool
