@@ -120,31 +120,31 @@ def test_openai_provider_request_and_error_hides_key():
     assert "secret-key" not in str(exc.value)
 
 
-def test_settings_endpoints_never_return_credentials(client):
-    resp = client.put(
+def test_settings_endpoints_never_return_credentials(auth_client):
+    resp = auth_client.put(
         "/settings/ai",
         json={"provider": "openai_compatible", "openai_base_url": "http://x/v1",
               "openai_api_key": "super-secret", "openai_model": "m"},
     )
     assert resp.status_code == 200
     assert "super-secret" not in resp.text
-    body = client.get("/settings/ai").json()
+    body = auth_client.get("/settings/ai").json()
     assert body["provider"] == "openai_compatible"
     assert body["openai_api_key_set"] is True
     assert body["claude_token_set"] is False
-    assert client.put("/settings/ai", json={"provider": "bogus"}).status_code == 422
+    assert auth_client.put("/settings/ai", json={"provider": "bogus"}).status_code == 422
 
 
-def test_triage_endpoint_wiring(client, assets, monkeypatch):
+def test_triage_endpoint_wiring(auth_client, assets, monkeypatch):
     # no provider configured -> 409
-    assert client.post("/triage", json={"job_id": 1}).status_code == 409
+    assert auth_client.post("/triage", json={"job_id": 1}).status_code == 409
 
-    client.put("/settings/ai", json={"provider": "claude", "claude_token": "t"})
+    auth_client.put("/settings/ai", json={"provider": "claude", "claude_token": "t"})
     reply = json.dumps([{"id": assets[1].id, "score": 90, "label": "likely_secret", "reason": "r"}])
     monkeypatch.setattr(
         triage_api.AIProviderFactory, "create", lambda self: FakeProvider(reply)
     )
-    resp = client.post("/triage", json={"job_id": 1})
+    resp = auth_client.post("/triage", json={"job_id": 1})
     assert resp.status_code == 200
     body = resp.json()
     assert body["provider"] == "fake"

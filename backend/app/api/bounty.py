@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.schemas import bounty as s
 from app.services.bounty import (
@@ -13,7 +14,9 @@ from app.services.bounty import (
     ValidationError,
 )
 
-router = APIRouter(prefix="/programs", tags=["bounty"])
+router = APIRouter(
+    prefix="/programs", tags=["bounty"], dependencies=[Depends(get_current_user)]
+)
 
 
 def _call(fn, *args):
