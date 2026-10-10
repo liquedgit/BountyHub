@@ -1,6 +1,9 @@
+name: bountyhub
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bountyhub}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
@@ -14,7 +17,8 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: docker.io/library/redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -24,6 +28,7 @@ services:
   backend:
     build:
       context: ../backend
+    restart: unless-stopped
     environment: &backend-env
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-bountyhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@postgres:5432/${POSTGRES_DB:-bountyhub}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in infra/.env}
@@ -31,17 +36,24 @@ services:
       REDIS_URL: redis://redis:6379/0
       APP_ENV: development
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"__import__('urllib.request').request.urlopen('http://127.0.0.1:8000/health',timeout=3)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   worker:
     build:
       context: ..
       dockerfile: infra/Dockerfile.worker
+    restart: unless-stopped
     environment: *backend-env
     depends_on:
       postgres:
@@ -52,13 +64,15 @@ services:
   frontend:
     build:
       context: ../frontend
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       API_INTERNAL_URL: http://backend:8000
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
