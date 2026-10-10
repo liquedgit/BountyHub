@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api import auth, health, settings, triage
+from app.api.bounty import router as bounty_router
 from app.core.config import get_settings
 
 
@@ -10,6 +11,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(settings.router)
     app.include_router(triage.router)
+    app.include_router(bounty_router)
     return app
 
 
