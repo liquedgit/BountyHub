@@ -175,12 +175,15 @@ def test_assets_endpoint_field_names(api, db_session, program):
     svc.run_job(job.id)
     asset = svc.list_assets(job.id)[0]
     asset.ai_score = 0.7
+    asset.ai_label = "high"
+    asset.ai_reason = "exposed admin"
     db_session.commit()
     r = api.get(f"/recon/scans/{job.id}/assets")
     assert r.status_code == 200
     assert r.json() == [{
         "id": asset.id, "asset_type": "subdomain", "value": "api.example.com",
         "source": "subfinder", "meta": {"input": "example.com"}, "triage_score": 0.7,
+        "triage_label": "high", "triage_reason": "exposed admin",
     }]
     assert api.get("/recon/scans/999/assets").status_code == 404
     assert api.get("/recon/scans/999").status_code == 404
@@ -192,6 +195,7 @@ def test_recon_routes_require_auth(db_session, queue):
     with TestClient(app) as c:
         resp = c.post("/recon/scans", json={"program_id": 1, "targets": ["a.com"]})
         assert resp.status_code == 401
+        assert c.get("/recon/scans").status_code == 401
         assert c.get("/recon/scans/1").status_code == 401
         assert c.get("/recon/scans/1/assets").status_code == 401
 
@@ -335,3 +339,21 @@ def test_http_fetcher_does_not_follow_out_of_scope_redirect(db_session, program)
     fetcher = HttpFetcher(scope, client=client)
     assert fetcher("https://api.example.com/") is None
     assert requested == ["https://api.example.com/"]
+
+
+def test_list_scans_newest_first_filter_and_limit(api, db_session, program):
+    other = Program(name="Other")
+    db_session.add(other)
+    db_session.commit()
+    svc = service(db_session)
+    ids = [svc.create_job(program.id, ["example.com"]).id for _ in range(3)]
+    db_session.add(ReconJob(program_id=other.id, targets=["x.com"], status="queued"))
+    db_session.commit()
+    all_ids = [j["id"] for j in api.get("/recon/scans").json()]
+    assert all_ids == sorted(all_ids, reverse=True) and len(all_ids) == 4
+    r = api.get(f"/recon/scans?program_id={program.id}")
+    assert [j["id"] for j in r.json()] == ids[::-1]
+    assert set(r.json()[0]) == set(api.get(f"/recon/scans/{ids[0]}").json())
+    assert [j["id"] for j in api.get("/recon/scans?limit=2").json()] == all_ids[:2]
+    assert api.get("/recon/scans?limit=0").status_code == 422
+    assert api.get("/recon/scans?limit=101").status_code == 422

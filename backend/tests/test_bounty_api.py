@@ -153,3 +153,14 @@ def test_delete_program_cascades(auth_client):
     auth_client.post(f"/programs/{pid}/findings", json={"title": "x"})
     assert auth_client.delete(f"/programs/{pid}").status_code == 204
     assert auth_client.get(f"/programs/{pid}/targets").status_code == 404
+
+
+def test_timestamps_on_read_models(auth_client):
+    p = mk_program(auth_client)
+    pid = p["id"]
+    assert p["created_at"] and p["updated_at"]
+    t = auth_client.post(f"/programs/{pid}/targets", json={"value": "a.acme.com"}).json()
+    f = auth_client.post(f"/programs/{pid}/findings", json={"title": "XSS"}).json()
+    n = auth_client.post(f"/programs/{pid}/notes", json={"title": "n", "body": "b"}).json()
+    for item in (t, f, n):
+        assert item["created_at"] and item["updated_at"]
