@@ -1,11 +1,13 @@
+from types import SimpleNamespace
+
 import httpx
 
 from app.recon.fetcher import HttpFetcher
-from app.recon.scope import ScopeRule, ScopeValidator
+from app.recon.scope import ScopeValidator
 
 
 def fetcher(handler, **kw):
-    scope = ScopeValidator([ScopeRule("example.com", "wildcard")])
+    scope = ScopeValidator([SimpleNamespace(action="in", type="wildcard", value="*.example.com")])
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return HttpFetcher(scope, client=client, **kw)
 

@@ -1,15 +1,19 @@
 import ipaddress
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from sqlalchemy.orm import Session
 
+from app.ai.base import AIProvider, AIProviderError
 from app.models.recon_job import ReconJob
-from app.recon.base import ReconAssetResult, ReconTool
+from app.recon.base import AssetType, Fetcher, ReconAssetResult, ReconTool
+from app.recon.js_crawler import JSEndpointCrawler
 from app.recon.scope import ScopeValidator
+from app.recon.secret_scanner import SecretScanner
 from app.repositories.bounty import ProgramRepository, ScopeRuleRepository
 from app.repositories.recon_asset import ReconAssetRepository
 from app.repositories.recon_job import ReconJobRepository
+from app.services.ai_triage import AITriageService
 from app.services.bounty import NotFoundError
 
 logger = logging.getLogger(__name__)
@@ -24,19 +28,29 @@ class ScopeViolation(Exception):
 
 
 class ReconService:
-    """Owns the recon pipeline order: scope -> subfinder -> httpx.
+    """Owns the recon pipeline order: scope -> subfinder -> httpx -> js_crawler ->
+    secret_scanner -> triage.
 
     Every tool input is filtered through a ScopeValidator built from the program's
     current rules; tool output is untrusted and re-validated before the next stage.
     """
 
-    def __init__(self, db: Session, subfinder: ReconTool, httpx: ReconTool):
+    def __init__(
+        self,
+        db: Session,
+        subfinder: ReconTool,
+        httpx: ReconTool,
+        fetcher_factory: Callable[[ScopeValidator], Fetcher] | None = None,
+        ai_provider_factory: Callable[[], AIProvider] | None = None,
+    ):
         self._programs = ProgramRepository(db)
         self._rules = ScopeRuleRepository(db)
         self._jobs = ReconJobRepository(db)
         self._assets = ReconAssetRepository(db)
         self._subfinder = subfinder
         self._httpx = httpx
+        self._fetcher_factory = fetcher_factory
+        self._ai_provider_factory = ai_provider_factory
 
     def _validator(self, program_id: int) -> ScopeValidator:
         return ScopeValidator(self._rules.list_for_program(program_id))
@@ -97,7 +111,41 @@ class ReconService:
         job.rejected_targets = _dedupe([*job.rejected_targets, *probed_dropped])
         self._assets.bulk_add(job.id, probed_keep)
 
+        if self._fetcher_factory is not None:
+            live = _dedupe(r.value for r in probed_keep if r.type == AssetType.HOST)
+            fetcher = self._fetcher_factory(validator)
+            for stage, tool_cls in (
+                ("js_crawler", JSEndpointCrawler),
+                ("secret_scanner", SecretScanner),
+            ):
+                self._jobs.set_stage(job, stage)
+                found = tool_cls(validator, fetcher).run(live)
+                # Secret values are redacted, so scope is judged by the fetched URL.
+                self._assets.bulk_add(
+                    job.id, [r for r in found if validator.is_in_scope(r.source)]
+                )
+
+        self._triage(job)
         self._jobs.mark_finished(job)
+
+    def _triage(self, job: ReconJob) -> None:
+        """Best-effort AI triage; any problem is noted on the job, never fails it."""
+        self._jobs.set_stage(job, "triage")
+        if self._ai_provider_factory is None:
+            self._note(job, "triage skipped: no AI provider configured")
+            return
+        try:
+            provider = self._ai_provider_factory()
+            AITriageService(provider, self._assets).triage(job_id=job.id)
+        except AIProviderError as exc:
+            self._note(job, f"triage skipped: {exc}"[:500])
+        except Exception as exc:  # noqa: BLE001 - triage must not fail the scan
+            logger.warning("triage failed for recon job %s: %s", job.id, type(exc).__name__)
+            self._note(job, f"triage failed: {type(exc).__name__}")
+
+    def _note(self, job: ReconJob, text: str) -> None:
+        job.notes = [*(job.notes or []), text]
+        self._jobs.set_stage(job, "triage")  # commits the note
 
 
 def _dedupe(items: Iterable[str]) -> list[str]:
