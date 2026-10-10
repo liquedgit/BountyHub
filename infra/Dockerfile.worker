@@ -1,0 +1,9 @@
+# Worker image stub. Recon tools (subfinder, httpx) are installed in a later task.
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+# TODO(task-4): install ProjectDiscovery subfinder + httpx binaries here.
+COPY backend/ .
+CMD ["arq", "app.worker.WorkerSettings"]
