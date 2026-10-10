@@ -51,12 +51,17 @@ strict `ScopeValidator`, auth on every route, the full recon pipeline (subfinder
 JS crawl → secret scan → AI triage), the initial Alembic migration, the worker image with
 pinned `subfinder` / `pd-httpx`, `infra/.env.example` and the README.
 
-Not done yet — this is what the open backlog covers (see §8):
-- The repo has **no git remote**; the default branch is still `master`.
-- The stack has **never been started in Docker**. Only the unit suites and
-  `docker compose config` have been run, so image builds, migrations against real
-  Postgres, the worker and the frontend proxy are unverified.
-- `infra/.env` does not exist (Compose refuses to start without it).
+Published (task 17, done): `origin` is `https://github.com/liquedgit/BountyHub.git`, the
+default branch is `main`, and local `main` is in sync with `origin/main`.
+
+Open — see §8 and the backlog:
+- **Task 18 (in progress)** is starting the stack in Docker for the first time. Until it
+  lands, image builds, migrations against real Postgres, the worker and the frontend
+  proxy are unverified. While it runs it owns `infra/docker-compose.yml`, the three
+  Dockerfiles and the running `bountyhub` compose project.
+- **Tasks 21–22 (parallel with 18)** add the operator scripts and the README run guide.
+  They need no running stack and touch none of task 18's files.
+- **Tasks 19–20 (after 18)** smoke-test the live stack, wipe the test data and push.
 
 ## 4. Architecture
 
@@ -66,6 +71,7 @@ Monorepo, two apps + infra:
 /backend      FastAPI (Python 3.12), OOP service layer, SQLAlchemy 2.x, Alembic
 /frontend     Next.js (App Router, TS), Tailwind, shadcn/ui, feature-based folders
 /infra        docker-compose.yml, worker Dockerfile with recon tools
+/scripts      operator scripts: stack.sh (drive the stack), smoke_test.py (end-to-end check)
 ```
 
 ### Backend (FastAPI, OOP)
@@ -161,6 +167,9 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - **Backend lint:** `cd backend && ruff check .`
 - **Frontend tests:** `cd frontend && npm ci && npm test` (Vitest).
 - **Frontend lint/build:** `npm run lint`, `npm run build`.
+- **Stack by hand:** `scripts/stack.sh up | down | ps | logs | urls | reset --yes` (§8).
+- **End-to-end check of a running stack:** `python3 scripts/smoke_test.py` (§8). It is
+  not part of the unit suites and is never run in a way that reaches a real host.
 - All merges must keep both suites green and must not make real external calls in tests.
 
 ## 7. Conventions
@@ -168,8 +177,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Recon adapters never bypass `ScopeValidator`; scope matching lives in one module.
 - Every router except health and auth login/register depends on `get_current_user`.
 - Secrets/tokens stored only in the `settings` table (local), never logged or returned.
-- **Integration workflow:** the default branch is `main` once task 17 lands (`master`
-  before that). Branch from it; before handing in, merge it into the branch and re-run
+- **Integration workflow:** the default branch is `main`. Branch from it; before handing in, merge it into the branch and re-run
   the tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
   `backend/requirements.txt` are shared registration files — add lines, never rewrite
   them. Do not delete existing local `task-*` branches or their worktrees.
@@ -210,3 +218,51 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
   with `subfinder -version` / `pd-httpx -version` inside the worker container.
 - The stack is left running (`up -d`) with an **empty database** so the user registers
   their own account; any test user created during verification is removed first.
+
+### Working in parallel on one host
+There is one laptop, one compose project, one running stack and one Postgres volume, so
+parallelism is limited by who may touch them.
+- Only one task at a time may run `up`, `down`, `build` or a volume wipe against project
+  `bountyhub`: task 18 now, then 19, then 20. These stay in sequence.
+- A task running alongside them must not start, stop, rebuild or wipe the stack, and must
+  not edit `infra/docker-compose.yml` or any Dockerfile. Read-only `ps` and `config` are
+  fine.
+- A parallel task must never create or overwrite the main checkout's `infra/.env`: the
+  Postgres volume is initialised with that password, so a second generated file locks
+  the database out. Test env-file creation against a temp path.
+- A dev backend started to test a script uses SQLite, binds `127.0.0.1` on a spare port
+  (not 3000, 8000 or 5432) and is stopped before hand-in.
+
+### Operator scripts (`/scripts`)
+- **`scripts/stack.sh`** — the supported way to drive the stack by hand. Subcommands:
+  `up` (`up -d --build`), `down`, `restart`, `ps`, `logs [service]`, `config`, `urls`,
+  `reset --yes`. It always uses `infra/docker-compose.yml`, project `bountyhub` and the
+  main checkout's `infra/.env` (override with `BOUNTYHUB_ENV_FILE`), resolved from the
+  script's own location so it works from any directory.
+  - When `docker` is podman it starts the user's `podman.socket` and exports
+    `DOCKER_HOST`; on real Docker it does neither.
+  - `up` creates the env file from `infra/.env.example` with generated secrets only when
+    it is missing — never overwrites, never prints a secret, mode 600.
+  - `down` never removes volumes. Only `reset` does (`down -v` then `up`), and it refuses
+    to run without `--yes`.
+  - `urls` prints `http://localhost:3000` plus one `http://<ip>:3000` per address from
+    `hostname -I`.
+  - It operates on the `bountyhub` project only; no prune, no pattern-based stop/rm.
+- **`scripts/smoke_test.py`** — Python 3 standard library only (no pip installs, no `jq`).
+  It checks a running instance the way the UI uses it and exits 0 only if every check
+  passes, printing one `PASS`/`FAIL` line per check.
+  - `--frontend-url` (default `http://localhost:3000`): API calls go through
+    `/api/backend/*`, login goes through the UI's own route (`/api/auth/login`), and the
+    `/login` page and the dashboard redirect for a signed-out visitor are checked too.
+    `--backend-url` talks to FastAPI directly and runs the API checks only.
+  - Credentials come from `--email` / `--password` or `SMOKE_EMAIL` / `SMOKE_PASSWORD`.
+    The app is single-user, so `403 Registration is closed` on register is not a failure:
+    the script goes on to log in with the given credentials.
+  - Checks: register or login → `/auth/me` → create a program → add `in` scope rules →
+    `scope-check` accepts an in-scope host and rejects another → `GET /settings/ai` →
+    `POST /recon/scans` with only out-of-scope targets returns 422 with
+    `rejected_targets` → a request without the cookie returns 401.
+  - It never submits a scan that could be accepted, and every hostname it uses is under
+    the reserved `.invalid` TLD, so no real host can be reached even if a check is wrong.
+  - It deletes the program it created, and never prints the password or the cookie. It
+    cannot delete the user it registered; on a fresh stack that is done by `reset`.
