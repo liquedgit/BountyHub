@@ -1,6 +1,9 @@
-fastapi
-sqlalchemy>=2
-arq
-pydantic>=2
-pytest
-httpx
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+SQLAlchemy>=2.0,<2.1
+alembic>=1.13
+psycopg2-binary>=2.9
+pydantic>=2.7
+pydantic-settings>=2.3
+redis>=5.0
+arq>=0.26

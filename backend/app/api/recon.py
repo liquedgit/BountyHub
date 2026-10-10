@@ -1,8 +1,11 @@
 from typing import Protocol
 
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.db import get_session
 from app.repositories.recon import ReconRepository
 from app.schemas.recon import ReconAssetOut, ReconJobOut, ReconScanRequest
@@ -15,10 +18,15 @@ class JobQueue(Protocol):
     async def enqueue_job(self, function: str, *args) -> object: ...
 
 
-def get_queue(request: Request) -> JobQueue:
+async def get_queue(request: Request) -> JobQueue:
+    """Lazily open the ARQ pool on first use and cache it on app state."""
     queue = getattr(request.app.state, "arq_pool", None)
     if queue is None:
-        raise HTTPException(503, "job queue unavailable")
+        try:
+            queue = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+        except Exception as exc:
+            raise HTTPException(503, "job queue unavailable") from exc
+        request.app.state.arq_pool = queue
     return queue
 
 
@@ -35,7 +43,8 @@ async def start_scan(
     try:
         job = ReconService(repo).create_job(body.program_id, body.targets)
     except ScopeViolation as exc:
-        raise HTTPException(422, {"detail": "no targets in scope", "rejected_targets": exc.rejected})
+        detail = {"detail": "no targets in scope", "rejected_targets": exc.rejected}
+        raise HTTPException(422, detail) from exc
     await queue.enqueue_job("run_recon_job", job.id)
     return job
 
