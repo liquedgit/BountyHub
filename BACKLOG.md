@@ -1,123 +1,104 @@
 # BountyHub — Backlog
 
 Each task is independently implementable (~15 tool turns incl. tests) and branches from
-`main`. Two lanes run at the same time (spec §8 "Working in parallel on one host"):
+`main`.
 
 ```
-stack lane (one at a time, owns the running stack):   18 ──► 19 ──► 20
-script lane (no running stack needed, start now):     21
-                                                      22
+A  backend: GET /auth/status ──────────────┐
+B  frontend: fix the sign-in route handler ├──► D  rebuild, prove it, reset, push
+C  frontend: /register page + first run ───┘
 ```
 
-21 and 22 are independent of each other and of 18. 19 uses their output if it is already
-on `main`, and does the same steps by hand if it is not.
+A, B and C start now and run in parallel. They must not run `up`, `down`, `build` or any
+volume command against the `bountyhub` project, must not touch the main checkout's
+`infra/.env`, and must not push (spec §8 "Working in parallel on one host"). D is the only
+task that touches the running stack.
 
 ## Done
 1–2, 5–8. Skeleton, auth, JS crawler + secret scanner, AI triage, frontend.
 3–4. Superseded by 9–10 and 12–13 (original branches never merged).
-9. Bounty domain landed · 10. Single strict ScopeValidator · 11. Auth on every route ·
-12. Subfinder/httpx adapters + recon job model · 13. ReconService, ARQ job, scan endpoints ·
-14. JS crawl, secret scan, AI triage stages · 15. Migration, worker image, env example,
-README · 16. Final verification · 17. Published to GitHub as `main`.
+9–16. Bounty domain, strict ScopeValidator, auth on every route, recon pipeline,
+migration, worker image, README, verification.
+17–22. Published to GitHub as `main`, stack running in Docker, `scripts/stack.sh`,
+`scripts/smoke_test.py`, README run guide.
 
-## Open — stack lane
+## Open
 
-### 18. Get the stack building and healthy in Docker  (in progress)
-Read spec §8 "Running on the user's laptop" first — the host runs podman behind the
-`docker` CLI and shares the machine with an unrelated `agent-office` container. Add
-`name: bountyhub` to `infra/docker-compose.yml`, publish the backend as
-`127.0.0.1:8000:8000`, add `restart: unless-stopped`, and add a backend healthcheck on
-`/health` that the frontend waits for. Create the main checkout's `infra/.env` with
-generated secrets if it does not exist (never commit or print it). Run
-`docker compose -f infra/docker-compose.yml --env-file <main checkout>/infra/.env up -d --build`
-and fix whatever breaks (image names, Dockerfiles, migration on real Postgres, worker
-start-up, frontend build) with the smallest change, keeping it valid for real Docker.
-Done when `docker compose -p bountyhub ps` shows postgres, redis, backend, worker and
-frontend running/healthy, `curl -f localhost:8000/health` and `curl -fI localhost:3000`
-succeed, the worker log shows ARQ started with `run_recon_job` registered, and
-`subfinder -version` + `pd-httpx -version` work inside the worker. Backend and frontend
-test suites stay green. Leave the stack running. If Docker cannot run at all for a
-reason outside the repo (needs sudo, no socket), report the exact error.
+Background (spec §3): the database is already empty, but the user cannot get in. There is
+no register page, the sign-in route handler expects a token the backend never sends, and
+the session cookie would be `Secure` on plain HTTP.
 
-### 19. Smoke-test the running app end to end and document access  (after 18)
-Against the running stack, through the frontend origin only
-(`http://localhost:3000/api/backend/...`, cookie jar): register → login → `/auth/me` →
-create a program → add `in` scope rules → `scope-check` accepts an in-scope host and
-rejects an out-of-scope one → `GET /settings/ai` → `POST /recon/scans` with only
-out-of-scope targets returns 422 with `rejected_targets` → an unauthenticated request
-returns 401. Load `/login` and a dashboard page and confirm they render. Do **not**
-start a scan that reaches a real host. Fix any bug found (with a regression test) and
-rebuild. Check the app answers on the laptop's LAN address (`hostname -I`) port 3000;
-if a host firewall blocks it, report the command the user must run rather than
-changing the firewall. Update the README "First run" section to match reality
-(podman notes, `up -d`, the URLs, `logs` / `down` commands). Finally remove the test
-data so the user registers their own account (`docker compose -p bountyhub down -v`,
-then `up -d` again) and confirm all five services are healthy. Report the URLs.
+### A. Backend: public `GET /auth/status`
+Add `AuthService.registration_open() -> bool` (true only while the users table is empty;
+`register` should use it instead of its own count check) and a public route
+`GET /auth/status` returning `{"registration_open": bool}` through a Pydantic schema in
+`app/schemas/auth.py`. It returns nothing else: no email, no user count. Do not change
+`/auth/login`, and do not put the JWT in any response body.
 
-If 21 / 22 are on `main` when this starts, merge `main` first and use them instead of
-doing the steps by hand: `python3 scripts/smoke_test.py` for the API and page checks,
-`scripts/stack.sh urls` for the addresses and `scripts/stack.sh reset --yes` for the
-wipe. Fix the script, not the check, only when the script itself is wrong; a real app
-bug still gets a fix and a regression test. Correct the README run guide from 22 where
-the live stack differs from it.
+Tests (`backend/tests/test_auth.py`, `test_route_protection.py`): `true` on an empty
+database, `false` after a registration, reachable without a cookie, and the
+route-protection test's list of public routes gains `/auth/status` and nothing else.
+`pytest` and `ruff check .` green.
 
-### 20. Push the deployment fixes to GitHub  (after 19)
-With 18–19 (and 21–22 if finished) merged into `main`: confirm the tree is clean and
-`infra/.env` is untracked, `git push origin main` (fast-forward only), and check
-`git ls-remote origin main` equals local `main`. Confirm the `bountyhub` stack is still
-up and healthy and report the final URLs and the repository link.
+### B. Frontend: make UI sign-in work
+`frontend/src/app/api/auth/login/route.ts` reads `access_token` from the backend's JSON
+body, but `POST /auth/login` returns `{id, email}` and sends the JWT in `Set-Cookie`
+(`backend/app/api/auth.py`), so every correct sign-in ends in 502. Fix the handler, not
+the backend (spec §4 "Auth flow"):
+- Take the token from the upstream `Set-Cookie` header for cookie `AUTH_COOKIE_NAME`
+  (`headers.getSetCookie()`), then set the frontend's own cookie as now. No such cookie
+  on a 2xx → 502. Keep the 401 / 422 / 502 mapping.
+- The `Secure` flag comes from `AUTH_COOKIE_SECURE === "true"` (default false), not from
+  `NODE_ENV` / `COOKIE_SECURE`. Add `AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}` to
+  the `frontend` service in `infra/docker-compose.yml` (one line; do not start the stack).
+- Check `frontend/src/app/api/auth/logout/route.ts` clears the same cookie and still
+  works against the backend's 204.
 
-## Open — script lane (parallel with 18, start now)
+Tests (Vitest, new `frontend/tests/login-route.test.ts`, mocked `fetch`): 200 with the
+cookie set from an upstream `Set-Cookie`; cookie is httpOnly and not `Secure` by default,
+`Secure` when `AUTH_COOKIE_SECURE=true`; upstream 401 → 401; upstream 200 without the
+cookie → 502; backend unreachable → 502. `npm test`, `npm run lint`, `npm run build` green.
 
-Rules for both (spec §8 "Working in parallel on one host"): do not run `up`, `down`,
-`build` or any volume command against the `bountyhub` project — task 18 is using it.
-Do not edit `infra/docker-compose.yml` or any Dockerfile. Do not create or overwrite the
-main checkout's `infra/.env`. Do not push.
+### C. Frontend: `/register` page and first-run redirect
+Contract in spec §4 "Auth flow"; the backend endpoint is `GET /auth/status` →
+`{"registration_open": bool}` (task A; mock it here, do not wait for it).
+- `components/auth/register-form.tsx` in the style of `login-form.tsx`: email, password
+  (min 8), confirm password, client-side mismatch error. Add `register()` and
+  `getAuthStatus()` to `features/auth/api.ts`. Register posts to
+  `/api/backend/auth/register`, then calls the existing `login()` and goes to `/`.
+  403 → "An account already exists" with a link to `/login`; 422 → the validation message.
+- `app/register/page.tsx` in the same card layout as `/login`, titled for first-time
+  setup and saying this creates the single account for this install.
+- Server-side in both pages, fetch `${API_INTERNAL_URL}/auth/status` with
+  `cache: "no-store"`: `/login` redirects to `/register` while registration is open,
+  `/register` redirects to `/login` when it is closed. If the call fails, render the
+  page's own form; `/login` then shows a "Create account" link.
+- `middleware.ts`: `/register` is public like `/login` (signed-out visitors reach it,
+  signed-in visitors go to `/`). Keep `safeNextPath` behaviour unchanged.
+- README step "Register the single user": describe the real flow (first visit lands on
+  the create-account page; afterwards it is the sign-in page).
 
-### 21. `scripts/smoke_test.py` — repeatable end-to-end check
-Read spec §8 "Operator scripts" for the contract. Python 3 standard library only
-(`urllib`, `http.cookiejar`, `argparse`, `json`). Before writing, read
-`frontend/src/lib/` and `frontend/src/app/api/auth/login/route.ts` to see which paths the
-UI really calls, and `backend/app/api/` for the request/response shapes.
-- Modes: `--frontend-url` (default `http://localhost:3000`) or `--backend-url`.
-- Credentials from `--email` / `--password` or `SMOKE_EMAIL` / `SMOKE_PASSWORD`; treat
-  `403` on register as "already registered" and continue to login.
-- Run the checks listed in the spec, one `PASS`/`FAIL` line each, exit 0 only when all
-  pass, non-zero with a clear message when the server is unreachable.
-- Every hostname used is under `.invalid` (for example rule `in.bountyhub.invalid`,
-  rejected host `out.bountyhub.invalid`). The only scan request sends out-of-scope
-  targets and must get 422; if it is ever accepted, report FAIL and stop.
-- Delete the program the script created, also when a later check fails. Never print the
-  password or cookie.
+Tests: `register-form.test.tsx` (success calls register then login, password mismatch,
+403 message), `middleware.test.ts` cases for `/register` signed out and signed in.
+`npm test`, `npm run lint`, `npm run build` green. Do not edit the login route handler
+(task B owns it).
 
-Verify without Docker: in a venv inside your worktree, start the backend on SQLite on
-`127.0.0.1` and a spare port (not 3000 / 8000 / 5432) with a throwaway `JWT_SECRET`,
-create the tables the way the tests or Alembic do, and run the script with
-`--backend-url`. It must pass on a fresh DB, pass again on a second run (registration
-closed), and exit non-zero against a closed port. Stop the server afterwards. Put the
-exact commands you used in the script's module docstring. `ruff check scripts/` with the
-backend config and the backend test suite stay green. `--frontend-url` mode cannot be
-run here; keep its extra checks small and say in the hand-in that it is untested until
-task 19.
-
-### 22. `scripts/stack.sh` and the README run guide
-Read spec §8 ("Running on the user's laptop", "Operator scripts"). Write a POSIX-friendly
-bash script (`set -euo pipefail`) with the subcommands and guarantees listed there:
-podman detection + `podman.socket` + `DOCKER_HOST`; fixed compose file, project name and
-env file resolved from the script's own path; `BOUNTYHUB_ENV_FILE` override; env file
-created from `infra/.env.example` with `openssl rand -hex 32` secrets only when missing,
-mode 600, nothing secret echoed; `down` without `-v`; `reset` refusing without `--yes`;
-`urls` from `hostname -I`; unknown subcommand prints usage and exits 2.
-
-Verify without touching the stack: `bash -n`, `shellcheck` if installed, `stack.sh urls`,
-`stack.sh ps` (read-only), and `BOUNTYHUB_ENV_FILE=$(mktemp -u) stack.sh config` to prove
-the env file is created once with mode 600, is not overwritten on a second run, and that
-compose accepts it. Do **not** run `up`, `down`, `restart` or `reset`; say so in the
-hand-in. Remove the temp file.
-
-Then rewrite the README "First run (Parrot OS)" section around the script: prerequisites
-(Docker or podman with docker-compose), `scripts/stack.sh up`, where to browse
-(`http://localhost:3000`, or `http://<laptop-ip>:3000` from another machine; the API is
-on `127.0.0.1:8000` only), `logs` / `ps` / `down`, what `reset --yes` destroys, and that
-after a reboot the stack is started again with `scripts/stack.sh up`. Keep the existing
-register / program / AI settings / scan steps and every other README section unchanged.
+### D. Rebuild, prove sign-up and sign-in end to end, reset, push  (after A, B, C)
+The only task that touches the stack. Use `scripts/stack.sh`; operate on project
+`bountyhub` only (an unrelated `agent-office` container shares the host).
+1. On `main` with A–C merged: run both test suites, then `scripts/stack.sh up`.
+2. Extend `scripts/smoke_test.py` with the checks added in spec §8: `/auth/status`
+   before and after registering, `/register` reachable in frontend mode, and the
+   `/api/auth/login` response sets the session cookie without `Secure` on an `http://`
+   URL. Keep it standard-library only and `.invalid` hostnames only.
+3. Run `python3 scripts/smoke_test.py` in frontend mode with throwaway credentials and
+   paste the full PASS/FAIL output in the hand-in. Also run it once against
+   `http://<lan-ip>:3000`. A failure is fixed in the app with a regression test, not by
+   weakening the check. No scan against a real host.
+4. The user asked for a reset: run `scripts/stack.sh reset --yes`, wait for all five
+   services, then prove the result instead of assuming it: `select count(*) from users`
+   is 0 (psql inside the postgres container), `GET /auth/status` says
+   `registration_open: true`, and `curl -I http://localhost:3000/` ends at `/register`.
+5. Commit, confirm `infra/.env` is untracked, `git push origin main` (fast-forward only),
+   check `git ls-remote origin main` equals local `main`. Report the URLs from
+   `scripts/stack.sh urls` and exactly what the user will see on first visit.

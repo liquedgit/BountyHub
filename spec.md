@@ -29,8 +29,10 @@ Two pillars:
 
 In:
 - Email+password auth (single user), argon2 hashing, JWT in httpOnly cookies, Next.js
-  middleware route protection. **Every backend route except `/health`, `/auth/register`
-  and `/auth/login` requires the auth cookie.**
+  middleware route protection. **Every backend route except `/health`, `/auth/status`,
+  `/auth/register` and `/auth/login` requires the auth cookie.**
+- First-run account creation in the UI: a `/register` page that is only usable while no
+  account exists (see §4 "Auth flow").
 - Programs (platform, scope in/out, reward info), Targets, Findings/Reports (status,
   severity, payout), Markdown Notes attached to programs/findings.
 - Recon jobs: Subfinder → httpx → JS endpoint crawl → secret/leak scan → AI triage, run as
@@ -46,22 +48,30 @@ Out (future):
 
 ## 3. Current state (2026-10-10)
 
-Feature-complete for the MVP. Office tasks #1–#16 are merged: bounty domain, the single
-strict `ScopeValidator`, auth on every route, the full recon pipeline (subfinder → httpx →
-JS crawl → secret scan → AI triage), the initial Alembic migration, the worker image with
-pinned `subfinder` / `pd-httpx`, `infra/.env.example` and the README.
+Feature-complete on the backend and deployed: office tasks #1–#22 are merged, `main` is in
+sync with `origin/main` (`https://github.com/liquedgit/BountyHub.git`), and the `bountyhub`
+compose stack is running on the laptop with all five services up. The database is
+**already empty** (0 users, 0 programs, checked 2026-10-10).
 
-Published (task 17, done): `origin` is `https://github.com/liquedgit/BountyHub.git`, the
-default branch is `main`, and local `main` is in sync with `origin/main`.
+The user cannot get in, and a database reset alone does not fix it. Three defects, found
+by reading the code and probing the running stack (the sign-in success path has not been
+reproduced live, because that needs an account):
 
-Open — see §8 and the backlog:
-- **Task 18 (in progress)** is starting the stack in Docker for the first time. Until it
-  lands, image builds, migrations against real Postgres, the worker and the frontend
-  proxy are unverified. While it runs it owns `infra/docker-compose.yml`, the three
-  Dockerfiles and the running `bountyhub` compose project.
-- **Tasks 21–22 (parallel with 18)** add the operator scripts and the README run guide.
-  They need no running stack and touch none of task 18's files.
-- **Tasks 19–20 (after 18)** smoke-test the live stack, wipe the test data and push.
+1. **No way to create the account in the UI.** The frontend has only `/login`. There is no
+   register page or form, and the middleware redirects `/register` to `/login`. The README
+   points at a "register page" that does not exist.
+2. **UI sign-in cannot succeed.** `frontend/src/app/api/auth/login/route.ts` expects the
+   backend to return `{access_token}` in the JSON body. The backend returns `{id, email}`
+   and puts the JWT in a `Set-Cookie` header, so the handler answers 502 "Backend returned
+   no token" for correct credentials.
+3. **The session cookie would be `Secure` over plain HTTP.** The same handler sets
+   `secure` whenever `NODE_ENV=production` unless `COOKIE_SECURE=false`, and compose never
+   passes that variable to the frontend. Browsers drop a `Secure` cookie on
+   `http://<laptop-ip>:3000`.
+
+Task 19 was marked done with only README changes, so its "smoke test passed through the
+UI" result is not trusted. Open work is in the backlog: tasks A–C fix the three defects,
+task D rebuilds, proves it end to end, wipes the database and pushes.
 
 ## 4. Architecture
 
@@ -131,6 +141,10 @@ One implementation, at `app/recon/scope.py`, based on the strict validator from
 - `POST /recon/scans` `{program_id, targets[]}` → 202 job; 422 with `rejected_targets`
   when nothing is in scope. `GET /recon/scans/{id}`, `GET /recon/scans/{id}/assets`.
 - `GET/PUT /settings/ai`, `POST /triage`, `/auth/{register,login,logout,me}`, `/health`.
+- `GET /auth/status` (public) → `{"registration_open": bool}`: true only while the
+  `users` table is empty. It returns nothing else (no email, no count).
+- `POST /auth/login` returns `{id, email}` and sets the JWT as an httpOnly cookie. The
+  token is **never** in a response body; do not add an `access_token` field.
 - Field names follow `frontend/src/lib/types.ts`: scope rule `action`/`type`/`value`;
   job `status`, `current_stage`, `targets`, `rejected_targets`, `error`, timestamps;
   asset `asset_type`, `value`, `source`, `meta`, `triage_score`. The backend schema maps
@@ -142,6 +156,25 @@ One implementation, at `app/recon/scope.py`, based on the strict validator from
 - Dark mode, dashboard overview, feature pages for programs/findings/recon/notes.
 - Auth via httpOnly cookie; middleware guards `(dashboard)` routes. Browser calls go
   through the `/api/backend/*` rewrite so the cookie is same-origin.
+
+#### Auth flow
+- Public pages: `/login` and `/register`. The middleware lets a signed-out visitor reach
+  both and sends a signed-in visitor from either to `/`.
+- First run: `/login` asks the backend for `/auth/status` on the server; while
+  `registration_open` is true it redirects to `/register`. `/register` redirects to
+  `/login` once registration is closed. If the status call fails, each page renders its
+  own form and `/login` shows a "Create account" link.
+- `RegisterForm` (`components/auth/register-form.tsx`): email, password (min 8, same as
+  the backend), confirm password. It posts to `/api/backend/auth/register`, then signs in
+  through `/api/auth/login` and goes to `/`. A 403 shows "An account already exists" with
+  a link to `/login`; a 422 shows the validation message.
+- `POST /api/auth/login` (Next route handler) forwards the credentials to the backend,
+  takes the JWT from the backend's `Set-Cookie` header (cookie `AUTH_COOKIE_NAME`) and
+  sets it as its own httpOnly, `SameSite=Lax`, `path=/` cookie. Backend 401/422 pass
+  through as "Invalid email or password"; a missing cookie is a 502.
+- The cookie's `Secure` flag comes from `AUTH_COOKIE_SECURE` (default `false`), the same
+  variable the backend reads, passed to the frontend service in compose. It is not
+  derived from `NODE_ENV`: the app is served over plain HTTP on the LAN.
 
 ### Data model (core tables)
 `users`, `programs`, `scope_rules` (action in/out, type domain/wildcard/ip/url, value),
@@ -175,7 +208,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 ## 7. Conventions
 - Backend OOP service/repository layering; no business logic in routers.
 - Recon adapters never bypass `ScopeValidator`; scope matching lives in one module.
-- Every router except health and auth login/register depends on `get_current_user`.
+- Every router except health and auth status/login/register depends on `get_current_user`.
 - Secrets/tokens stored only in the `settings` table (local), never logged or returned.
 - **Integration workflow:** the default branch is `main`. Branch from it; before handing in, merge it into the branch and re-run
   the tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
@@ -223,7 +256,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 There is one laptop, one compose project, one running stack and one Postgres volume, so
 parallelism is limited by who may touch them.
 - Only one task at a time may run `up`, `down`, `build` or a volume wipe against project
-  `bountyhub`: task 18 now, then 19, then 20. These stay in sequence.
+  `bountyhub`. In the current backlog that is task D only; A–C never touch the stack.
 - A task running alongside them must not start, stop, rebuild or wipe the stack, and must
   not edit `infra/docker-compose.yml` or any Dockerfile. Read-only `ps` and `config` are
   fine.
@@ -258,7 +291,11 @@ parallelism is limited by who may touch them.
   - Credentials come from `--email` / `--password` or `SMOKE_EMAIL` / `SMOKE_PASSWORD`.
     The app is single-user, so `403 Registration is closed` on register is not a failure:
     the script goes on to log in with the given credentials.
-  - Checks: register or login → `/auth/me` → create a program → add `in` scope rules →
+  - Checks: `GET /auth/status` returns a boolean `registration_open` (and `false` after
+    the register/login step) → in frontend mode `/register` answers 200 or redirects to
+    `/login` → register or login → the login response sets the session cookie without
+    the `Secure` attribute when the URL is `http://` → `/auth/me` → create a program →
+    add `in` scope rules →
     `scope-check` accepts an in-scope host and rejects another → `GET /settings/ai` →
     `POST /recon/scans` with only out-of-scope targets returns 422 with
     `rejected_targets` → a request without the cookie returns 401.
