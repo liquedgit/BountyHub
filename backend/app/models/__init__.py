@@ -11,6 +11,7 @@ from app.models.bounty import (
     Target,
 )
 from app.models.recon_asset import ReconAsset
+from app.models.recon_job import ReconJob
 from app.models.setting import Setting
 from app.models.user import User
 
@@ -21,6 +22,7 @@ __all__ = [
     "Note",
     "Program",
     "ReconAsset",
+    "ReconJob",
     "ScopeAction",
     "ScopeRule",
     "ScopeType",
