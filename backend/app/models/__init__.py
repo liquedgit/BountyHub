@@ -12,6 +12,7 @@ from app.models.bounty import (
 )
 from app.models.recon_asset import ReconAsset
 from app.models.setting import Setting
+from app.models.user import User
 
 __all__ = [
     "Base",
@@ -26,4 +27,5 @@ __all__ = [
     "Setting",
     "Severity",
     "Target",
+    "User",
 ]
