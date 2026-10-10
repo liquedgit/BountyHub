@@ -1,5 +1,6 @@
 export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME ?? "access_token";
 export const LOGIN_PATH = "/login";
+export const REGISTER_PATH = "/register";
 
 /** Only allow same-origin relative redirect targets (prevents open redirects). */
 export function safeNextPath(next: string | null | undefined): string {

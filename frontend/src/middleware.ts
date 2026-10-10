@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AUTH_COOKIE_NAME, LOGIN_PATH, hasValidSession } from "@/lib/auth";
+import { AUTH_COOKIE_NAME, LOGIN_PATH, REGISTER_PATH, hasValidSession } from "@/lib/auth";
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const authed = hasValidSession(request.cookies.get(AUTH_COOKIE_NAME)?.value);
 
-  if (pathname === LOGIN_PATH) {
+  if (pathname === LOGIN_PATH || pathname === REGISTER_PATH) {
     return authed ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
   }
 
