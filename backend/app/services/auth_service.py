@@ -1,10 +1,10 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from jose import JWTError, jwt
 
-from app.config import Settings
+from app.core.config import Settings
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
@@ -38,7 +38,7 @@ class AuthService:
 
     # --- tokens ---
     def issue_token(self, user: User) -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         claims = {
             "sub": str(user.id),
             "iat": now,

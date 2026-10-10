@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.api.deps import get_auth_service
-from app.config import Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.main import app
 from app.services.auth_service import AuthError, AuthService, RegistrationClosedError
 
@@ -50,7 +50,7 @@ def test_token_rejects_tampered_wrong_secret_and_expired(service):
     with pytest.raises(AuthError):
         service.verify_token(other)
     expired = jwt.encode(
-        {"sub": "1", "exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
+        {"sub": "1", "exp": datetime.now(UTC) - timedelta(minutes=1)},
         SETTINGS.jwt_secret,
         algorithm="HS256",
     )
