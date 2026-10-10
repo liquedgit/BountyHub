@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models.bounty import Finding, Note, Program, ScopeRule, Target
+from app.recon.scope import ScopeDecision, ScopeValidator
 from app.repositories.bounty import (
     FindingRepository,
     NoteRepository,
@@ -9,7 +10,6 @@ from app.repositories.bounty import (
     ScopeRuleRepository,
     TargetRepository,
 )
-from app.services.scope_validator import ScopeDecision, ScopeValidator
 
 
 class NotFoundError(Exception):
