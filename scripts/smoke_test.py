@@ -142,6 +142,23 @@ def run(args, report: Report) -> None:
             status in (301, 302, 303, 307, 308) and "/login" in location,
             f"HTTP {status}, Location {location!r}",
         )
+        status, _, headers = client.request("GET", "/register", raw=True, cookies=False)
+        location = headers.get("Location", "")
+        report.check(
+            "/register answers 200 or redirects to /login",
+            status == 200
+            or (status in (301, 302, 303, 307, 308) and "/login" in location),
+            f"HTTP {status}, Location {location!r}",
+        )
+
+    status, payload, _ = client.request("GET", "/auth/status", cookies=False)
+    report.check(
+        "GET /auth/status returns a boolean registration_open",
+        status == 200
+        and isinstance(payload, dict)
+        and isinstance(payload.get("registration_open"), bool),
+        detail_of(status, payload),
+    )
 
     creds = {"email": args.email, "password": args.password}
     status, payload, _ = client.request("POST", "/auth/register", creds)
@@ -152,11 +169,30 @@ def run(args, report: Report) -> None:
     else:
         report.check("register or login", False, detail_of(status, payload))
         raise Stop
-    status, payload, _ = client.request("POST", login_path, creds, raw=login_raw)
+    status, payload, headers = client.request("POST", login_path, creds, raw=login_raw)
     if not report.check(
         f"register/login ({registered})", status == 200, detail_of(status, payload)
     ):
         raise Stop
+
+    if frontend and args.frontend_url.lower().startswith("http://"):
+        # Attribute names only: the cookie value is never printed.
+        cookies = headers.get_all("Set-Cookie") or []
+        attrs = [
+            {a.strip().split("=")[0].lower() for a in c.split(";")[1:]} for c in cookies
+        ]
+        report.check(
+            "login sets a session cookie without Secure over http://",
+            bool(cookies) and all("secure" not in a for a in attrs),
+            f"{len(cookies)} cookie(s), Secure on {sum('secure' in a for a in attrs)}",
+        )
+
+    status, payload, _ = client.request("GET", "/auth/status", cookies=False)
+    report.check(
+        "GET /auth/status registration_open is false after register/login",
+        status == 200 and isinstance(payload, dict) and payload.get("registration_open") is False,
+        detail_of(status, payload),
+    )
 
     status, payload, _ = client.request("GET", "/auth/me")
     ok = status == 200 and isinstance(payload, dict) and payload.get("email") == args.email
