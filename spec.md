@@ -46,29 +46,17 @@ Out (future):
 
 ## 3. Current state (2026-10-10)
 
-Merged on `master` (the default branch — there is no `main`): infra + backend skeleton
-(#1), auth (#2), JS crawler + secret scanner adapters (#5), AI triage + settings (#6),
-frontend skeleton + auth (#7), frontend feature pages (#8).
+Feature-complete for the MVP. Office tasks #1–#16 are merged: bounty domain, the single
+strict `ScopeValidator`, auth on every route, the full recon pipeline (subfinder → httpx →
+JS crawl → secret scan → AI triage), the initial Alembic migration, the worker image with
+pinned `subfinder` / `pd-httpx`, `infra/.env.example` and the README.
 
-**Built but not merged** — this is why #3 and #4 show as blocked:
-
-| Branch | Content | Why it did not land |
-|---|---|---|
-| `task-3` | Bounty domain (`/programs` + nested scope-rules/targets/findings/notes) and a strict `ScopeValidator` | 16 commits behind `master`; conflicts in `backend/app/main.py` and `backend/app/models/__init__.py` (router/model registration). |
-| `task-4` | Subfinder/httpx adapters, `ReconService`, ARQ job, `/recon/scans` endpoints | Branched before the skeleton existed. Conflicts in 7 files and it ships its own `app/db.py`, `models/base.py`, `recon/base.py`, `recon/scope.py`, `ReconAsset` model. Needs a **port**, not a rebase. |
-
-Known gaps on `master` that the remaining backlog closes:
-- Three different `ScopeValidator` implementations exist (`master:app/recon/scope.py`,
-  `task-3:app/services/scope_validator.py`, `task-4:app/recon/scope.py`). The one on
-  `master` matches `url` rules with a raw string prefix, so a rule `https://example.com`
-  also accepts `https://example.com.evil.net`. It must be replaced, not kept.
-- Only `/auth/me` checks the auth cookie; `/settings/ai` and `/triage` are open.
-- `backend/alembic/versions/` is empty, but the backend container runs
-  `alembic upgrade head` — in Docker no tables are created.
-- `infra/Dockerfile.worker` does not install subfinder/httpx; `app/worker.py` registers no
-  recon job.
-- There is no real HTTP `Fetcher` for the JS crawler / secret scanner (tests use a fake).
-- The frontend already calls `/programs…` and `/recon/scans…`; those routes 404 today.
+Not done yet — this is what the open backlog covers (see §8):
+- The repo has **no git remote**; the default branch is still `master`.
+- The stack has **never been started in Docker**. Only the unit suites and
+  `docker compose config` have been run, so image builds, migrations against real
+  Postgres, the worker and the frontend proxy are unverified.
+- `infra/.env` does not exist (Compose refuses to start without it).
 
 ## 4. Architecture
 
@@ -164,8 +152,9 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Infra: Docker Compose (postgres, redis, backend, worker, frontend).
 
 ## 6. Running & tests
-- **Dev up:** `docker compose -f infra/docker-compose.yml up --build`
-  (backend applies Alembic migrations on start).
+- **Up:** `cp infra/.env.example infra/.env` (set real values), then
+  `docker compose -f infra/docker-compose.yml up -d --build`
+  (backend applies Alembic migrations on start). App: `http://localhost:3000`.
 - **Backend tests:** `cd backend && pip install -r requirements.txt -r requirements-dev.txt
   && pytest` (SQLite + fakes; subprocess runner, fetcher and AI providers are mocked —
   no real network/tool calls in tests).
@@ -179,8 +168,45 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Recon adapters never bypass `ScopeValidator`; scope matching lives in one module.
 - Every router except health and auth login/register depends on `get_current_user`.
 - Secrets/tokens stored only in the `settings` table (local), never logged or returned.
-- **Integration workflow:** tasks are done one at a time, in backlog order. Branch from
-  the current `master`; before handing in, merge `master` into the branch and re-run the
-  tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
+- **Integration workflow:** the default branch is `main` once task 17 lands (`master`
+  before that). Branch from it; before handing in, merge it into the branch and re-run
+  the tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
   `backend/requirements.txt` are shared registration files — add lines, never rewrite
-  them. Do not delete the `task-3` / `task-4` branches or their worktrees.
+  them. Do not delete existing local `task-*` branches or their worktrees.
+
+## 8. Publishing & local deployment
+
+### GitHub
+- Remote `origin` = `https://github.com/liquedgit/BountyHub.git`. It exists, is empty and
+  is **public**. Auth is the host's `gh auth login` (account `liquedgit`, https protocol,
+  `repo` scope); never ask for, print or store a token.
+- The full existing history is published — not a fresh `git init`. Local `master` is
+  renamed to `main` and pushed with upstream tracking. Only `main` is pushed; `task-*`
+  branches and `worktrees/` stay local.
+- Because the repo is public, nothing secret may be in any pushed commit. Tracked env
+  files are `*.env.example` with placeholders only; `infra/.env` is gitignored.
+- Plain fast-forward pushes only. No `--force`, no history rewriting.
+
+### Running on the user's laptop
+- On this host `docker` is **podman 5.4 emulating the Docker CLI**, with docker-compose
+  v2.26 as the external compose provider. Compose needs the podman API socket
+  (`systemctl --user start podman.socket`, `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock`),
+  and podman may reject unqualified image names — use `docker.io/library/...`.
+  Anything changed for podman must still work on real Docker.
+- Compose project name is fixed (`name: bountyhub`) so containers, network and volume are
+  the same whether started from the main checkout or a worktree.
+- Secrets live in `infra/.env` of the **main checkout**
+  (`/home/liqued/agent-office/workspace/bountyhub/infra/.env`, mode 600, gitignored),
+  generated once (`openssl rand -hex 32`) and reused, because the Postgres volume is
+  initialised with that password. From a worktree, pass it with `--env-file`.
+- Published ports: frontend `3000` on all interfaces (the user may browse from another
+  machine on the LAN); backend `127.0.0.1:8000` only; Postgres and Redis are not
+  published (host port 5432 is already taken by another service). The browser only
+  ever talks to `:3000` — API calls go through the `/api/backend/*` rewrite.
+- A container named `agent-office` runs on the same host and is **not ours**. Only ever
+  operate on the `bountyhub` compose project: no `docker system prune`, no
+  `docker rm`/`stop` by pattern, no volume prune.
+- Deployment checks never run recon against a real third-party host. Verify the tools
+  with `subfinder -version` / `pd-httpx -version` inside the worker container.
+- The stack is left running (`up -d`) with an **empty database** so the user registers
+  their own account; any test user created during verification is removed first.

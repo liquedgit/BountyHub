@@ -1,99 +1,65 @@
 # BountyHub — Backlog
 
 Ordered. Each task is independently implementable (~15 tool turns incl. tests).
-Work them **one at a time, in order** — each branches from the current `master`.
+Work them in order; each branches from the default branch (`main` after task 17).
 
 ## Done
-1. Infra & backend skeleton
-2. Auth (backend)
-5. JS endpoint crawler + secret/leak scanner adapters (backend)
-6. AI triage provider layer (backend)
-7. Frontend skeleton + auth (Next.js)
-8. Frontend feature pages: programs/findings/notes + recon dashboard (Next.js)
-
-## Superseded
-3. Bounty domain + ScopeValidator — code exists on branch `task-3`, never merged
-   (conflicts in `main.py`, `models/__init__.py`). Replaced by tasks 9–10.
-4. Recon pipeline — code exists on branch `task-4`, never merged (branched before the
-   skeleton, conflicts in 7 files, duplicate db/base/scope modules). Replaced by
-   tasks 12–13.
+1–2, 5–8. Skeleton, auth, JS crawler + secret scanner, AI triage, frontend.
+3–4. Superseded by 9–10 and 12–13 (original branches never merged).
+9. Bounty domain landed · 10. Single strict ScopeValidator · 11. Auth on every route ·
+12. Subfinder/httpx adapters + recon job model · 13. ReconService, ARQ job, scan endpoints ·
+14. JS crawl, secret scan, AI triage stages · 15. Migration, worker image, env example,
+README · 16. Final verification.
 
 ## Open
 
-### 9. Land the bounty domain from `task-3` onto master
-Bring branch `task-3` (programs, scope_rules, targets, findings, notes: models, schemas,
-repository, services, `app/api/bounty.py`, tests) onto current `master`. Merge `master`
-into the branch and resolve the two conflicts by keeping **both** sides: `main.py` must
-register health, auth, settings, triage and bounty routers; `models/__init__.py` must
-export `ReconAsset`, `Setting`, `User` and the bounty models. Keep
-`app/services/scope_validator.py` as is for now (task 10 moves it). Check the routes
-match `frontend/src/lib/api.ts` (`/programs`, nested `scope-rules|targets|findings|notes`,
-`scope-check`). Done when `cd backend && pytest` and `ruff check .` pass on the result.
+### 17. Publish the project to GitHub as `main`
+Read spec §8 "GitHub". Before pushing, confirm nothing secret is tracked or in history:
+`git ls-files` shows only `*.env.example` env files, and
+`git log --all -p | grep -nE "gho_|ghp_|sk-ant-|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY"`
+finds only obvious test fixtures / scanner regexes (inspect each hit; if a real
+credential is found, stop and report instead of pushing). Then
+`git remote add origin https://github.com/liquedgit/BountyHub.git`,
+`git branch -m master main`, `git push -u origin main`. If the push is rejected for
+credentials run `gh auth setup-git` and retry; do not use `--force`. Update the
+remaining `master` wording in `README.md` if any. Done when `git ls-remote origin main`
+equals local `main` and `gh repo view liquedgit/BountyHub --json defaultBranchRef`
+reports `main`. Push `main` only.
 
-### 10. One ScopeValidator: replace the loose one with the strict one
-Move the strict validator from `app/services/scope_validator.py` to `app/recon/scope.py`,
-replacing the implementation there, and delete the old module. Update `ProgramService`,
-`JSEndpointCrawler`, `SecretScanner` and their tests to the single API
-(`check`, `is_in_scope`, `partition`; rules read as `action`/`type`/`value`). Keep the
-semantics in spec §4. Add regression tests: a `url` rule `https://example.com` rejects
-`https://example.com.evil.net`; an `out` rule beats a matching wildcard; `*.example.com`
-does not match the apex; empty rule set rejects everything; garbage input is rejected.
-Done when no other module defines scope matching (`grep -rn "class ScopeValidator"`
-returns one hit) and the backend suite is green.
+### 18. Get the stack building and healthy in Docker  (after 17)
+Read spec §8 "Running on the user's laptop" first — the host runs podman behind the
+`docker` CLI and shares the machine with an unrelated `agent-office` container. Add
+`name: bountyhub` to `infra/docker-compose.yml`, publish the backend as
+`127.0.0.1:8000:8000`, add `restart: unless-stopped`, and add a backend healthcheck on
+`/health` that the frontend waits for. Create the main checkout's `infra/.env` with
+generated secrets if it does not exist (never commit or print it). Run
+`docker compose -f infra/docker-compose.yml --env-file <main checkout>/infra/.env up -d --build`
+and fix whatever breaks (image names, Dockerfiles, migration on real Postgres, worker
+start-up, frontend build) with the smallest change, keeping it valid for real Docker.
+Done when `docker compose -p bountyhub ps` shows postgres, redis, backend, worker and
+frontend running/healthy, `curl -f localhost:8000/health` and `curl -fI localhost:3000`
+succeed, the worker log shows ARQ started with `run_recon_job` registered, and
+`subfinder -version` + `pd-httpx -version` work inside the worker. Backend and frontend
+test suites stay green. Leave the stack running. If Docker cannot run at all for a
+reason outside the repo (needs sudo, no socket), report the exact error.
 
-### 11. Require auth on every backend route
-Add `Depends(get_current_user)` at router level to bounty, settings and triage routers
-(everything except `/health`, `/auth/register`, `/auth/login`). Add a test that walks
-`app.routes` and asserts every non-exempt route returns 401 without the cookie, so any
-router added later fails the suite if it is left open. Give the existing API tests an
-authenticated-client fixture in `tests/conftest.py`.
+### 19. Smoke-test the running app end to end and document access  (after 18)
+Against the running stack, through the frontend origin only
+(`http://localhost:3000/api/backend/...`, cookie jar): register → login → `/auth/me` →
+create a program → add `in` scope rules → `scope-check` accepts an in-scope host and
+rejects an out-of-scope one → `GET /settings/ai` → `POST /recon/scans` with only
+out-of-scope targets returns 422 with `rejected_targets` → an unauthenticated request
+returns 401. Load `/login` and a dashboard page and confirm they render. Do **not**
+start a scan that reaches a real host. Fix any bug found (with a regression test) and
+rebuild. Check the app answers on the laptop's LAN address (`hostname -I`) port 3000;
+if a host firewall blocks it, report the command the user must run rather than
+changing the firewall. Update the README "First run" section to match reality
+(podman notes, `up -d`, the URLs, `logs` / `down` commands). Finally remove the test
+data so the user registers their own account (`docker compose -p bountyhub down -v`,
+then `up -d` again) and confirm all five services are healthy. Report the URLs.
 
-### 12. Recon adapters for Subfinder and httpx + recon job model
-Port from branch `task-4` onto master's structure (do not merge the branch). Add
-`CommandRunner` protocol + `SubprocessRunner` (argv list, timeout, no shell) to
-`app/recon/`, and `SubfinderTool` / `HttpxTool` implementing master's synchronous
-`ReconTool.run(targets) -> list[ReconAssetResult]` (subfinder → `SUBDOMAIN`, httpx JSON
-lines → `HOST` with status/title/tech in metadata). Binary paths come from settings
-(`subfinder`, `pd-httpx`). Add the `ReconJob` model and extend the existing `ReconAsset`
-model with `source` and a FK to `recon_jobs` (keep `ai_score`/`ai_label`/`ai_reason`);
-add `ReconJobRepository` and extend `ReconAssetRepository`. Use
-`app.core.database` / `app.models.base` — no `app/db.py`. Tests use a fake runner with
-fixture output and cover parsing, tool-missing and timeout errors.
-
-### 13. ReconService, ARQ job and scan endpoints
-`ReconService` (spec §4): `create_job(program_id, targets)` partitions targets with
-`ScopeValidator` and raises when none are in scope; `run_job(job_id)` re-loads the
-rules, runs subfinder → httpx, re-validates discovered hosts before httpx, stores
-assets, tracks `status`/`current_stage`/`rejected_targets`/`error`. ARQ function
-`run_recon_job` in `app/jobs/recon_jobs.py`, registered in `app/worker.py`; ARQ pool
-created on app startup. Router `app/api/recon.py`: `POST /recon/scans` (202, or 422 with
-`rejected_targets`), `GET /recon/scans/{id}`, `GET /recon/scans/{id}/assets`, with
-response fields named as in `frontend/src/lib/types.ts`. Tests use fake tools and a fake
-queue and assert that an out-of-scope target, and an out-of-scope host returned by
-subfinder, are never passed to any tool.
-
-### 14. Complete the pipeline: JS crawl, secret scan, AI triage
-Add a real `Fetcher` (timeout, response size cap, redirect target re-validated against
-scope, errors return `None`). Extend `ReconService.run_job` with the `js_crawler` and
-`secret_scanner` stages over the live in-scope hosts, then a best-effort `triage` stage
-calling `AITriageService` on the job's assets (provider failure or no provider
-configured is noted on the job, scan still completes). Secret values are stored but
-never logged. Tests use a fake fetcher and fake provider: stage order, assets of all
-four types stored for one job, triage failure does not fail the job.
-
-### 15. Delivery: migrations, worker image, env and README
-Initial Alembic migration covering every table in `Base.metadata` plus a test that
-`alembic upgrade head` on an empty SQLite DB yields the same tables as the models.
-`infra/Dockerfile.worker`: install pinned ProjectDiscovery subfinder and httpx release
-binaries (httpx as `/usr/local/bin/pd-httpx`). `infra/docker-compose.yml`: pass
-`JWT`/secret settings from an env file; add `infra/.env.example`. Root `README.md`:
-first run on Parrot OS (compose up, register the single user, add a program and scope
-rules, paste the `claude setup-token` token or OpenAI-compatible key in Settings, start
-a scan) and how to run the tests. Verify with `docker compose -f infra/docker-compose.yml config`.
-
-### 16. Final verification on master
-With 9–15 merged: run `pytest` + `ruff check .` in `backend/`, and `npm test`,
-`npm run lint`, `npm run build` in `frontend/`. Diff the backend response schemas against
-`frontend/src/lib/types.ts` and `frontend/src/lib/api.ts` and fix any mismatch in field
-names, enums or paths. Fix whatever fails; report the commands and their results. Leave
-the `task-3` / `task-4` branches and worktrees in place.
+### 20. Push the deployment fixes to GitHub  (after 19)
+With 18–19 merged into `main`: confirm the tree is clean and `infra/.env` is untracked,
+`git push origin main` (fast-forward only), and check `git ls-remote origin main`
+equals local `main`. Confirm the `bountyhub` stack is still up and healthy and report
+the final URLs and the repository link.
