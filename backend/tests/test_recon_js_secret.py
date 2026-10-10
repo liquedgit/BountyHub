@@ -1,6 +1,8 @@
+from types import SimpleNamespace
+
 from app.recon.base import AssetType
 from app.recon.js_crawler import JSEndpointCrawler
-from app.recon.scope import ScopeRule, ScopeValidator
+from app.recon.scope import ScopeValidator
 from app.recon.secret_scanner import SecretScanner, shannon_entropy
 
 HTML = '<html><script src="/static/app.js"></script><script src="https://cdn.other.com/x.js"></script></html>'
@@ -28,8 +30,9 @@ class FakeFetcher:
 def scope():
     return ScopeValidator(
         [
-            ScopeRule("example.com", "wildcard"),
-            ScopeRule("admin.example.com", "domain", is_in_scope=False),
+            SimpleNamespace(action="in", type="wildcard", value="*.example.com"),
+            SimpleNamespace(action="in", type="domain", value="example.com"),
+            SimpleNamespace(action="out", type="domain", value="admin.example.com"),
         ]
     )
 
