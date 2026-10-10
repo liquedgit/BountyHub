@@ -3,7 +3,7 @@ from types import SimpleNamespace as R
 import pytest
 
 from app.models.bounty import ScopeAction, ScopeType
-from app.services.scope_validator import ScopeValidator
+from app.recon.scope import ScopeValidator
 
 
 def rule(action, type_, value):
@@ -145,3 +145,39 @@ def test_partition_and_decision_details():
     assert [d.target for d in bad] == ["x.example.com", "evil.com"]
     assert sv.check("a.example.com").matched_rule.value == "*.example.com"
     assert bool(sv.check("a.example.com")) is True
+
+
+def test_url_rule_rejects_lookalike_host():
+    sv = v(("in", "url", "https://example.com"))
+    assert sv.is_in_scope("https://example.com")
+    assert sv.is_in_scope("https://example.com/path")
+    assert not sv.is_in_scope("https://example.com.evil.net")
+    assert not sv.is_in_scope("https://example.com.evil.net/path")
+    assert not sv.is_in_scope("https://example.company")
+
+
+def test_out_rule_beats_matching_wildcard():
+    sv = v(("in", "wildcard", "*.example.com"), ("out", "wildcard", "*.example.com"))
+    assert not sv.is_in_scope("a.example.com")
+
+
+def test_wildcard_does_not_match_apex():
+    assert not v(("in", "wildcard", "*.example.com")).is_in_scope("example.com")
+
+
+@pytest.mark.parametrize("target", ["example.com", "https://example.com/x", "10.0.0.1", "[::1]"])
+def test_empty_rule_set_rejects_everything(target):
+    assert not v().is_in_scope(target)
+    assert v().partition([target]) == ([], [v().check(target)])
+
+
+@pytest.mark.parametrize(
+    "garbage", ["", "\x00", "http://", "://", "a b", "https://[::1", "\n", "http://exa mple.com"]
+)
+def test_garbage_input_rejected(garbage):
+    sv = v(
+        ("in", "wildcard", "*.example.com"),
+        ("in", "domain", "example.com"),
+        ("in", "url", "https://example.com"),
+    )
+    assert not sv.is_in_scope(garbage)
