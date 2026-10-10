@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Iterable
+from enum import StrEnum
+from typing import Any
 
 
-class AssetType(str, Enum):
+class AssetType(StrEnum):
     SUBDOMAIN = "subdomain"
     HOST = "host"
     ENDPOINT = "endpoint"

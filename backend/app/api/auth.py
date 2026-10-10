@@ -44,7 +44,11 @@ def login(
     return user
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_current_user)],
+)
 def logout(response: Response, settings: Settings = Depends(get_settings)):
     response.delete_cookie(settings.auth_cookie_name, path="/")
 
