@@ -42,4 +42,11 @@ describe("auth middleware", () => {
     const res = middleware(req("/login", jwt(Math.floor(Date.now() / 1000) + 3600)));
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
+
+  it("allows the register page when logged out and bounces it when logged in", () => {
+    const res = middleware(req("/register"));
+    expect(res.headers.get("location")).toBeNull();
+    const authed = middleware(req("/register", jwt(Math.floor(Date.now() / 1000) + 3600)));
+    expect(new URL(authed.headers.get("location")!).pathname).toBe("/");
+  });
 });

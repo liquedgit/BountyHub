@@ -74,7 +74,10 @@ You do not need to create any config by hand.
    `python3 scripts/smoke_test.py` runs a repeatable end-to-end check of a running
    instance (register/login, scope check, rejected scan, 401 without a cookie).
 
-3. **Register the single user** at <http://localhost:3000> (register page). All other
+3. **Register the single user** at <http://localhost:3000>. The first visit lands on
+   the create-account page (`/register`); enter an email and a password of at least 8
+   characters, and you are signed in straight away. Once the account exists,
+   registration is closed and the same URL shows the sign-in page instead. All other
    backend routes require the login cookie.
 4. **Create a program** and add **scope rules** (see below). Add the targets you want
    to scan.
