@@ -1,24 +1,19 @@
-import Link from "next/link";
+import type { ReactNode } from "react";
+import { LogoutButton } from "@/components/layout/logout-button";
+import { Sidebar } from "@/components/layout/sidebar";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 
-const NAV = [
-  { href: "/programs", label: "Programs" },
-  { href: "/findings", label: "Findings" },
-  { href: "/notes", label: "Notes" },
-  { href: "/recon", label: "Recon" },
-];
-
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen">
-      <nav className="w-48 space-y-2 border-r p-4">
-        <div className="mb-4 font-bold">BountyHub</div>
-        {NAV.map((n) => (
-          <Link key={n.href} href={n.href} className="block hover:underline">
-            {n.label}
-          </Link>
-        ))}
-      </nav>
-      <main className="flex-1 p-6">{children}</main>
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 items-center justify-end gap-2 border-b px-4">
+          <ThemeToggle />
+          <LogoutButton />
+        </header>
+        <main className="flex-1 p-6">{children}</main>
+      </div>
     </div>
   );
 }
