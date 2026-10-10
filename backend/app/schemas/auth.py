@@ -11,3 +11,7 @@ class UserOut(BaseModel):
 
     id: int
     email: EmailStr
+
+
+class AuthStatus(BaseModel):
+    registration_open: bool
