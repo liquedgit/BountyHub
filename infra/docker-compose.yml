@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: bountyhub
-      POSTGRES_PASSWORD: bountyhub
-      POSTGRES_DB: bountyhub
+      POSTGRES_USER: ${POSTGRES_USER:-bountyhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-bountyhub}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bountyhub"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -25,7 +25,9 @@ services:
     build:
       context: ../backend
     environment: &backend-env
-      DATABASE_URL: postgresql+psycopg2://bountyhub:bountyhub@postgres:5432/bountyhub
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-bountyhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@postgres:5432/${POSTGRES_DB:-bountyhub}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in infra/.env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: development
     ports:

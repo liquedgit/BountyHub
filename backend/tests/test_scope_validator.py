@@ -1,19 +1,9 @@
-from enum import StrEnum
 from types import SimpleNamespace as R
 
 import pytest
 
+from app.models.bounty import ScopeAction, ScopeType
 from app.recon.scope import ScopeValidator
-
-
-class ScopeAction(StrEnum):
-    IN = "in"
-    OUT = "out"
-
-
-class ScopeType(StrEnum):
-    DOMAIN = "domain"
-    WILDCARD = "wildcard"
 
 
 def rule(action, type_, value):
