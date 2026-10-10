@@ -1,4 +1,8 @@
 __pycache__/
 *.pyc
-.pytest_cache/
 *.db
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+node_modules/

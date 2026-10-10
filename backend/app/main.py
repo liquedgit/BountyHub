@@ -1,12 +1,15 @@
 from fastapi import FastAPI
 
-from app import models  # noqa: F401  (register tables)
+from app.api import health
 from app.api.bounty import router as bounty_router
-
-app = FastAPI(title="BountyHub")
-app.include_router(bounty_router)
+from app.core.config import get_settings
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def create_app() -> FastAPI:
+    app = FastAPI(title=get_settings().app_name)
+    app.include_router(health.router)
+    app.include_router(bounty_router)
+    return app
+
+
+app = create_app()

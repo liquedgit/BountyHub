@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.db import get_db
+from app.core.database import get_db
 from app.schemas import bounty as s
 from app.services.bounty import (
     FindingService,

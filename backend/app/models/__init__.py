@@ -1,4 +1,5 @@
-from app.models.bounty import (  # noqa: F401
+from app.models.base import Base
+from app.models.bounty import (
     Finding,
     FindingStatus,
     Note,
@@ -9,3 +10,16 @@ from app.models.bounty import (  # noqa: F401
     Severity,
     Target,
 )
+
+__all__ = [
+    "Base",
+    "Finding",
+    "FindingStatus",
+    "Note",
+    "Program",
+    "ScopeAction",
+    "ScopeRule",
+    "ScopeType",
+    "Severity",
+    "Target",
+]
