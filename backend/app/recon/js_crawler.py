@@ -51,9 +51,7 @@ class JSEndpointCrawler(ReconTool):
         def add(kind: str, value: str, source: str) -> None:
             if (kind, value) not in seen:
                 seen.add((kind, value))
-                results.append(
-                    ReconAssetResult(AssetType.ENDPOINT, value, source, {"kind": kind})
-                )
+                results.append(ReconAssetResult(AssetType.ENDPOINT, value, source, {"kind": kind}))
 
         for target in targets:
             if not self.scope.is_in_scope(target):
