@@ -3,13 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.ai.base import AIProviderError
 from app.ai.factory import AIProviderFactory
+from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.repositories.recon_asset import ReconAssetRepository
 from app.repositories.settings import SettingsRepository
 from app.schemas.triage import TriageRequest, TriageResponse
 from app.services.ai_triage import AITriageService
 
-router = APIRouter(prefix="/triage", tags=["triage"])
+router = APIRouter(
+    prefix="/triage", tags=["triage"], dependencies=[Depends(get_current_user)]
+)
 
 
 def get_triage_service(db: Session = Depends(get_db)) -> AITriageService:

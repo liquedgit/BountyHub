@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.repositories.settings import SettingsRepository
 from app.schemas.settings import AISettingsResponse, AISettingsUpdate
 from app.services.settings import SettingsService
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(
+    prefix="/settings", tags=["settings"], dependencies=[Depends(get_current_user)]
+)
 
 
 def get_settings_service(db: Session = Depends(get_db)) -> SettingsService:
