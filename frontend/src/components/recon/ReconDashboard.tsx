@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import type { ReconAsset } from "@/lib/types";
 
 export const POLL_INTERVAL_MS = 3000;
-const TERMINAL = ["completed", "failed", "done", "finished"];
+const TERMINAL = ["completed", "failed"];
 const GROUPS = [
   { type: "subdomain", label: "Subdomains" },
   { type: "host", label: "Hosts" },
