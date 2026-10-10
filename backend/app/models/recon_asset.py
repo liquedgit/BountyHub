@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Float, Integer, String, Text
+from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -10,7 +10,10 @@ class ReconAsset(Base):
     __tablename__ = "recon_assets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    job_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    job_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("recon_jobs.id"), index=True, nullable=True
+    )
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     asset_type: Mapped[str] = mapped_column(String(32), index=True)
     value: Mapped[str] = mapped_column(Text)
     asset_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)

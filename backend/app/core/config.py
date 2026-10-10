@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     auth_cookie_name: str = "access_token"
     auth_cookie_secure: bool = False
 
+    subfinder_bin: str = "subfinder"
+    httpx_bin: str = "pd-httpx"
+    recon_tool_timeout: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:
