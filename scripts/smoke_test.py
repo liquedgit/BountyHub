@@ -129,11 +129,17 @@ def run(args, report: Report) -> None:
         login_path, login_raw = "/auth/login", False
 
     if frontend:
-        status, payload, _ = client.request("GET", "/login", raw=True, cookies=False)
+        status, payload, headers = client.request("GET", "/login", raw=True, cookies=False)
+        location = headers.get("Location", "")
+        page = "login"
+        if status in (301, 302, 303, 307, 308) and location.rstrip("/").endswith("/register"):
+            # First run: /login sends the visitor to /register while registration is open.
+            page = "register (first-run redirect from /login)"
+            status, payload, _ = client.request("GET", "/register", raw=True, cookies=False)
         report.check(
-            "login page renders",
+            f"{page} page renders",
             status == 200 and isinstance(payload, str) and "<html" in payload.lower(),
-            f"HTTP {status}",
+            f"HTTP {status}, Location {location!r}",
         )
         status, _, headers = client.request("GET", "/", raw=True, cookies=False)
         location = headers.get("Location", "")
