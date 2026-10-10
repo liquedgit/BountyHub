@@ -1,64 +1,68 @@
-from typing import Protocol
-
-from arq import create_pool
-from arq.connections import RedisSettings
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.db import get_session
-from app.repositories.recon import ReconRepository
-from app.schemas.recon import ReconAssetOut, ReconJobOut, ReconScanRequest
-from app.services.recon_service import ReconService, ScopeViolation
+from app.api.deps import get_current_user
+from app.core.database import get_db
+from app.jobs.queue import JobQueue
+from app.recon.httpx_tool import HttpxTool
+from app.recon.subfinder import SubfinderTool
+from app.repositories.recon_job import ReconJobRepository
+from app.schemas.recon import ReconAssetRead, ReconJobRead, ReconScanCreate
+from app.services.bounty import NotFoundError
+from app.services.recon import ReconService, ScopeViolation
 
-router = APIRouter(prefix="/recon", tags=["recon"])
+router = APIRouter(
+    prefix="/recon/scans", tags=["recon"], dependencies=[Depends(get_current_user)]
+)
 
 
-class JobQueue(Protocol):
-    async def enqueue_job(self, function: str, *args) -> object: ...
-
-
-async def get_queue(request: Request) -> JobQueue:
-    """Lazily open the ARQ pool on first use and cache it on app state."""
-    queue = getattr(request.app.state, "arq_pool", None)
+def get_job_queue(request: Request) -> JobQueue:
+    queue = getattr(request.app.state, "job_queue", None)
     if queue is None:
-        try:
-            queue = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
-        except Exception as exc:
-            raise HTTPException(503, "job queue unavailable") from exc
-        request.app.state.arq_pool = queue
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job queue unavailable")
     return queue
 
 
-def get_repo(session: Session = Depends(get_session)) -> ReconRepository:
-    return ReconRepository(session)
+def get_recon_service(db: Session = Depends(get_db)) -> ReconService:
+    return ReconService(db, SubfinderTool(), HttpxTool())
 
 
-@router.post("/scans", response_model=ReconJobOut, status_code=202)
-async def start_scan(
-    body: ReconScanRequest,
-    repo: ReconRepository = Depends(get_repo),
-    queue: JobQueue = Depends(get_queue),
+@router.post("", response_model=ReconJobRead, status_code=status.HTTP_202_ACCEPTED)
+async def create_scan(
+    body: ReconScanCreate,
+    service: ReconService = Depends(get_recon_service),
+    queue: JobQueue = Depends(get_job_queue),
+    db: Session = Depends(get_db),
 ):
     try:
-        job = ReconService(repo).create_job(body.program_id, body.targets)
-    except ScopeViolation as exc:
-        detail = {"detail": "no targets in scope", "rejected_targets": exc.rejected}
-        raise HTTPException(422, detail) from exc
-    await queue.enqueue_job("run_recon_job", job.id)
+        job = service.create_job(body.program_id, body.targets)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
+    except ScopeViolation as e:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(e), "rejected_targets": e.rejected_targets},
+        )
+    try:
+        await queue.enqueue_recon_job(job.id)
+    except Exception as e:  # noqa: BLE001
+        ReconJobRepository(db).mark_finished(job, error="could not enqueue job")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job queue unavailable") from e
     return job
 
 
-@router.get("/scans/{job_id}", response_model=ReconJobOut)
-def get_scan(job_id: int, repo: ReconRepository = Depends(get_repo)):
-    job = repo.get_job(job_id)
-    if job is None:
-        raise HTTPException(404, "scan not found")
-    return job
+@router.get("/{job_id}", response_model=ReconJobRead)
+def get_scan(job_id: int, service: ReconService = Depends(get_recon_service)):
+    try:
+        return service.get_job(job_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
 
 
-@router.get("/scans/{job_id}/assets", response_model=list[ReconAssetOut])
-def get_scan_assets(job_id: int, repo: ReconRepository = Depends(get_repo)):
-    if repo.get_job(job_id) is None:
-        raise HTTPException(404, "scan not found")
-    return repo.list_assets(job_id)
+@router.get("/{job_id}/assets", response_model=list[ReconAssetRead])
+def get_scan_assets(job_id: int, service: ReconService = Depends(get_recon_service)):
+    try:
+        return service.list_assets(job_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e

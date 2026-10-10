@@ -1,9 +1,24 @@
-# Worker image stub. Recon tools (subfinder, httpx) are installed in a later task.
 FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# ProjectDiscovery release binaries (pinned). httpx is installed as pd-httpx so it
+# does not clash with the Python `httpx` package's CLI.
+ARG TARGETARCH=amd64
+ARG SUBFINDER_VERSION=2.6.6
+ARG HTTPX_VERSION=1.6.9
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir /tmp/pd && cd /tmp/pd \
+    && curl -fsSL -o subfinder.zip "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_${TARGETARCH}.zip" \
+    && curl -fsSL -o httpx.zip "https://github.com/projectdiscovery/httpx/releases/download/v${HTTPX_VERSION}/httpx_${HTTPX_VERSION}_linux_${TARGETARCH}.zip" \
+    && unzip -q subfinder.zip subfinder && unzip -q httpx.zip httpx \
+    && install -m 0755 subfinder /usr/local/bin/subfinder \
+    && install -m 0755 httpx /usr/local/bin/pd-httpx \
+    && cd / && rm -rf /tmp/pd
+
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# TODO(task-4): install ProjectDiscovery subfinder + httpx binaries here.
 COPY backend/ .
 CMD ["arq", "app.worker.WorkerSettings"]

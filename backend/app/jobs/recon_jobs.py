@@ -1,24 +1,17 @@
-import os
+import asyncio
 
-from arq.connections import RedisSettings
+from app.core.database import get_session_factory
+from app.recon.httpx_tool import HttpxTool
+from app.recon.subfinder import SubfinderTool
+from app.services.recon import ReconService
 
-from app.db import SessionLocal
-from app.repositories.recon import ReconRepository
-from app.services.recon_service import ReconService
+
+def _run_sync(job_id: int) -> None:
+    with get_session_factory()() as session:
+        ReconService(session, SubfinderTool(), HttpxTool()).run_job(job_id)
 
 
 async def run_recon_job(ctx: dict, job_id: int) -> int:
-    """ARQ task. Scope is re-checked inside ReconService.run_job."""
-    with SessionLocal() as session:
-        service = ReconService(ReconRepository(session))
-        await service.run_job(job_id)
+    """ARQ task: thin wrapper; scope is re-checked inside ReconService.run_job."""
+    await asyncio.to_thread(_run_sync, job_id)
     return job_id
-
-
-def redis_settings() -> RedisSettings:
-    return RedisSettings.from_dsn(os.environ.get("REDIS_URL", "redis://localhost:6379"))
-
-
-class WorkerSettings:
-    functions = [run_recon_job]
-    redis_settings = redis_settings()

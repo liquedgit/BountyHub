@@ -1,58 +1,42 @@
-import asyncio
-from abc import ABC, abstractmethod
+from __future__ import annotations
+
+import abc
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Protocol
+from enum import StrEnum
+from typing import Any
 
 
-@dataclass
-class ReconResult:
-    asset_type: str  # subdomain | host | endpoint | secret
+class AssetType(StrEnum):
+    SUBDOMAIN = "subdomain"
+    HOST = "host"
+    ENDPOINT = "endpoint"
+    SECRET = "secret"
+
+
+@dataclass(frozen=True)
+class ReconAssetResult:
+    """Typed result destined for the `recon_assets` table."""
+
+    type: AssetType
     value: str
     source: str
-    meta: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class ToolError(Exception):
-    pass
+# Fetches a URL and returns its text body, or None if unavailable.
+Fetcher = Callable[[str], "str | None"]
 
 
-class CommandRunner(Protocol):
-    async def run(
-        self, argv: list[str], stdin: str | None = None, timeout: float = 600
-    ) -> str: ...
+class OutOfScopeError(Exception):
+    def __init__(self, target: str):
+        super().__init__(f"target out of scope: {target}")
+        self.target = target
 
 
-class SubprocessRunner:
-    """The only place subprocesses are spawned (argv list, never a shell)."""
-
-    async def run(self, argv: list[str], stdin: str | None = None, timeout: float = 600) -> str:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            out, err = await asyncio.wait_for(
-                proc.communicate(stdin.encode() if stdin is not None else None), timeout
-            )
-        except FileNotFoundError as exc:
-            raise ToolError(f"{argv[0]} is not installed") from exc
-        except asyncio.TimeoutError as exc:
-            proc.kill()
-            raise ToolError(f"{argv[0]} timed out after {timeout}s") from exc
-        if proc.returncode != 0:
-            raise ToolError(f"{argv[0]} exited {proc.returncode}: {err.decode(errors='replace')[:500]}")
-        return out.decode(errors="replace")
-
-
-class ReconTool(ABC):
-    """Common adapter interface. Callers must pass only scope-validated targets."""
-
+class ReconTool(abc.ABC):
     name: str
 
-    def __init__(self, runner: CommandRunner | None = None):
-        self.runner: CommandRunner = runner or SubprocessRunner()
-
-    @abstractmethod
-    async def run(self, targets: list[str]) -> list[ReconResult]: ...
+    @abc.abstractmethod
+    def run(self, targets: Iterable[str]) -> list[ReconAssetResult]:
+        """Run the tool against targets; out-of-scope targets are never touched."""

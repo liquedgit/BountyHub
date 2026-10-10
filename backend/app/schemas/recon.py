@@ -3,12 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ReconScanRequest(BaseModel):
+class ReconScanCreate(BaseModel):
     program_id: int
     targets: list[str] = Field(min_length=1)
 
 
-class ReconJobOut(BaseModel):
+class ReconJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -23,12 +23,14 @@ class ReconJobOut(BaseModel):
     finished_at: datetime | None
 
 
-class ReconAssetOut(BaseModel):
+class ReconAssetRead(BaseModel):
+    """DB columns `asset_metadata` / `ai_score` are exposed as `meta` / `triage_score`."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     asset_type: str
     value: str
-    source: str
-    meta: dict
-    triage_score: float | None
+    source: str | None
+    meta: dict = Field(validation_alias="asset_metadata")
+    triage_score: float | None = Field(validation_alias="ai_score")

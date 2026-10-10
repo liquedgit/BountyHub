@@ -9,7 +9,7 @@ async def ping(ctx: dict) -> str:
 
 
 class WorkerSettings:
-    """ARQ worker settings; recon pipeline jobs are registered here in later tasks."""
+    """ARQ worker settings; recon pipeline jobs are registered here."""
 
     functions = [ping, run_recon_job]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
