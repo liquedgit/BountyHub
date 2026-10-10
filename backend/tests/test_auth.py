@@ -122,3 +122,21 @@ def test_register_closed_403(client, repo):
     repo.count.return_value = 1
     r = client.post("/auth/register", json={"email": "a@b.co", "password": "password123"})
     assert r.status_code == 403
+
+
+def test_registration_open_only_while_no_users(service, repo):
+    repo.count.return_value = 0
+    assert service.registration_open() is True
+    repo.count.return_value = 1
+    assert service.registration_open() is False
+
+
+def test_auth_status_public_and_minimal(client, repo):
+    repo.count.return_value = 0
+    r = client.get("/auth/status")
+    assert r.status_code == 200
+    assert r.json() == {"registration_open": True}
+    repo.count.return_value = 1
+    r = client.get("/auth/status")
+    assert r.status_code == 200
+    assert r.json() == {"registration_open": False}

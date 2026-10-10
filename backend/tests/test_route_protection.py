@@ -3,6 +3,7 @@ from app.main import create_app
 # The only routes reachable without a login cookie.
 PUBLIC = {
     ("GET", "/health"),
+    ("GET", "/auth/status"),
     ("POST", "/auth/register"),
     ("POST", "/auth/login"),
 }

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from app.api.deps import get_auth_service, get_current_user
 from app.core.config import Settings, get_settings
 from app.models.user import User
-from app.schemas.auth import Credentials, UserOut
+from app.schemas.auth import AuthStatus, Credentials, UserOut
 from app.services.auth_service import (
     AuthError,
     AuthService,
@@ -11,6 +11,11 @@ from app.services.auth_service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/status", response_model=AuthStatus)
+def auth_status(service: AuthService = Depends(get_auth_service)):
+    return AuthStatus(registration_open=service.registration_open())
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
