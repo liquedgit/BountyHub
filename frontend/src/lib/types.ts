@@ -39,7 +39,7 @@ export interface Note {
   body_md: string;
   finding_id: number | null;
 }
-export type JobStatus = "pending" | "queued" | "running" | "completed" | "failed" | string;
+export type JobStatus = "queued" | "running" | "completed" | "failed";
 export interface ReconJob {
   id: number;
   program_id: number;
@@ -48,6 +48,7 @@ export interface ReconJob {
   targets: string[];
   rejected_targets: string[];
   error: string | null;
+  notes: string[];
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -56,7 +57,7 @@ export interface ReconAsset {
   id: number;
   asset_type: string;
   value: string;
-  source: string;
+  source: string | null;
   meta: Record<string, unknown>;
   triage_score: number | null;
 }
