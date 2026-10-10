@@ -128,7 +128,9 @@ class ScopeValidator:
             return ScopeDecision(target, False, "invalid target")
         for rule in self._out:
             if self._matches(rule, t):
-                return ScopeDecision(target, False, f"excluded by out-of-scope rule {rule.value!r}", rule)
+                return ScopeDecision(
+                    target, False, f"excluded by out-of-scope rule {rule.value!r}", rule
+                )
         for rule in self._in:
             if self._matches(rule, t):
                 return ScopeDecision(target, True, f"matched in-scope rule {rule.value!r}", rule)

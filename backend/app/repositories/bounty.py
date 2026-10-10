@@ -1,4 +1,4 @@
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from app.models.bounty import Finding, Note, Program, ScopeRule, Target
 T = TypeVar("T")
 
 
-class BaseRepository(Generic[T]):
+class BaseRepository[T]:
     model: type[T]
 
     def __init__(self, db: Session):

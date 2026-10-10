@@ -106,7 +106,9 @@ def test_out_url_excludes_path_within_in_scope_host():
     assert not sv.is_in_scope("https://app.example.com/admin/users")
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "exa mple.com", "http://", "https://:80", "a.com:notaport"])
+@pytest.mark.parametrize(
+    "bad", ["", "   ", "exa mple.com", "http://", "https://:80", "a.com:notaport"]
+)
 def test_invalid_targets_rejected(bad):
     sv = v(("in", "wildcard", "*.example.com"), ("in", "domain", "a.com"))
     d = sv.check(bad)
@@ -127,7 +129,10 @@ def test_malformed_rules_never_match():
 
 def test_accepts_enum_values():
     sv = ScopeValidator(
-        [rule(ScopeAction.IN, ScopeType.WILDCARD, "*.example.com"), rule(ScopeAction.OUT, ScopeType.DOMAIN, "x.example.com")]
+        [
+            rule(ScopeAction.IN, ScopeType.WILDCARD, "*.example.com"),
+            rule(ScopeAction.OUT, ScopeType.DOMAIN, "x.example.com"),
+        ]
     )
     assert sv.is_in_scope("a.example.com")
     assert not sv.is_in_scope("x.example.com")

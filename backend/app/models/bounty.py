@@ -7,19 +7,19 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 
-class ScopeAction(str, enum.Enum):
+class ScopeAction(enum.StrEnum):
     IN = "in"
     OUT = "out"
 
 
-class ScopeType(str, enum.Enum):
+class ScopeType(enum.StrEnum):
     DOMAIN = "domain"
     WILDCARD = "wildcard"
     IP = "ip"
     URL = "url"
 
 
-class FindingStatus(str, enum.Enum):
+class FindingStatus(enum.StrEnum):
     NEW = "new"
     TRIAGED = "triaged"
     SUBMITTED = "submitted"
@@ -30,7 +30,7 @@ class FindingStatus(str, enum.Enum):
     PAID = "paid"
 
 
-class Severity(str, enum.Enum):
+class Severity(enum.StrEnum):
     INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
@@ -72,9 +72,15 @@ class ScopeRule(Base):
     __tablename__ = "scope_rules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
-    action: Mapped[ScopeAction] = mapped_column(Enum(ScopeAction, values_callable=lambda e: [m.value for m in e]))
-    type: Mapped[ScopeType] = mapped_column(Enum(ScopeType, values_callable=lambda e: [m.value for m in e]))
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
+    action: Mapped[ScopeAction] = mapped_column(
+        Enum(ScopeAction, values_callable=lambda e: [m.value for m in e])
+    )
+    type: Mapped[ScopeType] = mapped_column(
+        Enum(ScopeType, values_callable=lambda e: [m.value for m in e])
+    )
     value: Mapped[str] = mapped_column(String(500))
 
     program: Mapped[Program] = relationship(back_populates="scope_rules")
@@ -84,7 +90,9 @@ class Target(TimestampMixin, Base):
     __tablename__ = "targets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
     value: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
 
@@ -95,12 +103,15 @@ class Finding(TimestampMixin, Base):
     __tablename__ = "findings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
     target_id: Mapped[int | None] = mapped_column(ForeignKey("targets.id", ondelete="SET NULL"))
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[FindingStatus] = mapped_column(
-        Enum(FindingStatus, values_callable=lambda e: [m.value for m in e]), default=FindingStatus.NEW
+        Enum(FindingStatus, values_callable=lambda e: [m.value for m in e]),
+        default=FindingStatus.NEW,
     )
     severity: Mapped[Severity] = mapped_column(
         Enum(Severity, values_callable=lambda e: [m.value for m in e]), default=Severity.INFO
@@ -108,7 +119,9 @@ class Finding(TimestampMixin, Base):
     payout_cents: Mapped[int | None] = mapped_column(Integer)
 
     program: Mapped[Program] = relationship(back_populates="findings")
-    notes: Mapped[list["Note"]] = relationship(back_populates="finding", cascade="all, delete-orphan")
+    notes: Mapped[list["Note"]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
 
 
 class Note(TimestampMixin, Base):
@@ -117,8 +130,12 @@ class Note(TimestampMixin, Base):
     __tablename__ = "notes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    program_id: Mapped[int] = mapped_column(ForeignKey("programs.id", ondelete="CASCADE"), index=True)
-    finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"), index=True)
+    program_id: Mapped[int] = mapped_column(
+        ForeignKey("programs.id", ondelete="CASCADE"), index=True
+    )
+    finding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("findings.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(300))
     body_md: Mapped[str] = mapped_column(Text, default="")
 

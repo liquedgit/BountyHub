@@ -63,7 +63,9 @@ def _crud(path: str, service_cls, read, create, update):
     def _list(program_id: int, db: Session = Depends(get_db)):
         return _call(service_cls(db).list, program_id)
 
-    @router.post(f"/{{program_id}}/{path}", response_model=read, status_code=201, name=f"create_{path}")
+    @router.post(
+        f"/{{program_id}}/{path}", response_model=read, status_code=201, name=f"create_{path}"
+    )
     def _create(program_id: int, data: create, db: Session = Depends(get_db)):  # type: ignore[valid-type]
         return _call(service_cls(db).create, program_id, data)
 
