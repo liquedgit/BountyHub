@@ -8,26 +8,41 @@ Use it only against targets you are explicitly authorized to test.
 
 ## First run (Parrot OS)
 
-Prerequisites: Docker with the Compose plugin (`sudo apt install docker.io docker-compose-plugin`
-or Docker's own packages) and your user in the `docker` group.
+Prerequisites: Docker with the Compose plugin, **or** podman with `docker-compose`
+(on Parrot `docker` may be podman's Docker-compatible CLI; the script handles both).
+You do not need to create any config by hand.
 
-1. **Configure secrets.** Compose reads secrets from `infra/.env` and refuses to start
-   without them:
-
-   ```bash
-   cp infra/.env.example infra/.env
-   # set JWT_SECRET (openssl rand -hex 32) and POSTGRES_PASSWORD
-   ```
-
-2. **Start the stack.** The backend applies Alembic migrations on start; the worker
-   image ships pinned `subfinder` and `pd-httpx` (ProjectDiscovery httpx) binaries.
+1. **Start the stack** from any directory:
 
    ```bash
-   docker compose -f infra/docker-compose.yml config   # optional: validate
-   docker compose -f infra/docker-compose.yml up --build
+   scripts/stack.sh up
    ```
 
-   Frontend: <http://localhost:3000> · API: <http://localhost:8000> (`/health`).
+   The first run creates `infra/.env` with generated secrets (mode 600) if it is
+   missing and never overwrites an existing one; keep it, because the Postgres volume
+   is initialised with that password. On podman the script also starts your user's
+   `podman.socket` and sets `DOCKER_HOST`. The backend applies Alembic migrations on
+   start; the worker image ships pinned `subfinder` and `pd-httpx` binaries.
+
+2. **Browse** <http://localhost:3000>, or `http://<laptop-ip>:3000` from another
+   machine on the LAN (`scripts/stack.sh urls` lists the addresses). The API is
+   published on `127.0.0.1:8000` only; the browser reaches it through the frontend.
+
+   Day-to-day commands:
+
+   ```bash
+   scripts/stack.sh ps            # container status
+   scripts/stack.sh logs [svc]    # follow logs, optionally for one service
+   scripts/stack.sh restart
+   scripts/stack.sh down          # stop; the database volume is kept
+   ```
+
+   `scripts/stack.sh reset --yes` runs `down -v` and then `up`: it **destroys the
+   database** (all programs, findings and the registered user) and starts empty.
+   It refuses to run without `--yes`.
+
+   After a reboot the containers are not running; start the stack again with
+   `scripts/stack.sh up` (data in the volume is still there).
 
 3. **Register the single user** at <http://localhost:3000> (register page). All other
    backend routes require the login cookie.
