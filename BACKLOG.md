@@ -4,101 +4,207 @@ Each task is independently implementable (~15 tool turns incl. tests) and branch
 `main`.
 
 ```
-A  backend: GET /auth/status ──────────────┐
-B  frontend: fix the sign-in route handler ├──► D  rebuild, prove it, reset, push
-C  frontend: /register page + first run ───┘
+1  frontend foundation (UI kit, API client) ─┬─► 3  app shell + auth pages ───────┐
+                                             ├─► 4  programs ─────────────────────┤
+                                             ├─► 5  findings + notes ─────────────┤
+                                             ├─► 7  settings (AI provider) ───────┼─► 9  rebuild, verify
+2  backend read endpoints ──┬────────────────┼─► 6  recon (needs 1 and 2) ────────┤
+                            └────────────────┴─► 8  overview (needs 1 and 2) ─────┘
 ```
 
-A, B and C start now and run in parallel. They must not run `up`, `down`, `build` or any
-volume command against the `bountyhub` project, must not touch the main checkout's
-`infra/.env`, and must not push (spec §8 "Working in parallel on one host"). D is the only
-task that touches the running stack.
+1 and 2 start now, in parallel. 3–8 run in parallel once their prerequisites are merged.
+
+Rules for tasks 1–8 (spec §4 "UI system", §8 "Working in parallel on one host"):
+- Never `up`, `down`, `build` or wipe the `bountyhub` stack, never touch the main
+  checkout's `infra/.env`, never push. Task 9 is the only one that touches the stack.
+- File ownership, so parallel branches merge cleanly. Only task 1 edits
+  `frontend/package.json`, `package-lock.json`, `src/lib/api.ts`, `src/lib/types.ts`,
+  `src/components/ui/*`, `src/components/common/*`, `globals.css`, `tailwind.config.ts`.
+  Tasks 3–8 edit only the files named in their section; a missing primitive is a **new**
+  file, a missing API method or type is reported in the hand-in, not patched in place.
+- Frontend tasks finish with `npm test`, `npm run lint` and `npm run build` green.
+- No raw `<input>`/`<button>`/`<select>` and no hard-coded colour classes in feature code.
 
 ## Done
-1–2, 5–8. Skeleton, auth, JS crawler + secret scanner, AI triage, frontend.
-3–4. Superseded by 9–10 and 12–13 (original branches never merged).
-9–16. Bounty domain, strict ScopeValidator, auth on every route, recon pipeline,
-migration, worker image, README, verification.
-17–22. Published to GitHub as `main`, stack running in Docker, `scripts/stack.sh`,
-`scripts/smoke_test.py`, README run guide.
+1–16. Backend, recon pipeline, AI triage, first frontend, migrations, worker image.
+17–22. Published to GitHub as `main`, stack running, `scripts/stack.sh`, `scripts/smoke_test.py`.
+23–26. `/auth/status`, working sign-in, `/register` first-run page, verified and pushed.
 
-## Open
+## Open — UI and behaviour pass (spec §3 lists what is wrong today)
 
-Background (spec §3): the database is already empty, but the user cannot get in. There is
-no register page, the sign-in route handler expects a token the backend never sends, and
-the session cookie would be `Secure` on plain HTTP.
+### 1. Frontend foundation: UI kit, shared states, one API client
+Everything tasks 3–8 build on. No page redesign here; existing pages must keep working.
+- Tokens: add `success`, `warning`, `info` (with `-foreground`) to `globals.css` and
+  `tailwind.config.ts`. Default theme dark (`providers.tsx`), toggle kept.
+- Dependencies (the only task that adds any): `@radix-ui/react-dialog`,
+  `@radix-ui/react-tabs`, `sonner`.
+- `components/ui/`: add textarea, select (styled native), badge (default, secondary,
+  outline, success, warning, info, destructive), table, tabs, dialog, sheet, skeleton,
+  toaster; make sure button has `outline`, `ghost`, `destructive` variants and an `icon`
+  size. Mount the toaster in `providers.tsx`.
+- `components/common/`: `PageHeader`, `EmptyState`, `ErrorState`, `ListSkeleton`,
+  `ConfirmDialog`, `StatCard`, `SeverityBadge`, `StatusBadge`, `CopyButton`, `Markdown`.
+  `lib/format.ts`: `formatDate`, `formatRelative`, `formatMoney(cents)`, `formatDuration`.
+- `lib/api.ts`: one `ApiError(status, message, body)` with the message from `detail`
+  (string or validation list), `errorMessage(err)`, 401 → `/login?next=<path>` except on
+  the login call. `lib/api-client.ts` re-exports from it; `features/auth/api.ts` keeps
+  working. Add methods for the whole contract in spec §4: `api.targets`,
+  `api.programs.scopeCheck`, `api.recon.list(programId?)`, `api.dashboard.summary`,
+  `api.settings.getAI/updateAI`, `api.triage.run(jobId)`.
+- `lib/types.ts`: `Target`, `AISettings`, `AISettingsUpdate`, `DashboardSummary`,
+  `ScopeCheckResult`; `created_at`/`updated_at` on program, target, finding, note;
+  `triage_label`, `triage_reason` on `ReconAsset`.
+- `providers.tsx`: React Query defaults (`refetchOnWindowFocus: false`, `retry: 1`) and a
+  mutation-cache `onError` that toasts `errorMessage(err)` unless `meta.silent` is set.
+- `ProgramScoped` / `ProgramSelect`: selection in `?program=<id>` and `localStorage`,
+  auto-select when there is one program, `EmptyState` linking to `/programs` when there
+  are none. `useSearchParams` needs a `<Suspense>` boundary or `npm run build` fails.
+- Split `tests/features.test.tsx` into `tests/{programs,findings,notes,recon}.test.tsx`
+  (same assertions) and delete it.
 
-### A. Backend: public `GET /auth/status`
-Add `AuthService.registration_open() -> bool` (true only while the users table is empty;
-`register` should use it instead of its own count check) and a public route
-`GET /auth/status` returning `{"registration_open": bool}` through a Pydantic schema in
-`app/schemas/auth.py`. It returns nothing else: no email, no user count. Do not change
-`/auth/login`, and do not put the JWT in any response body.
+Tests: `tests/ui-kit.test.tsx` (ConfirmDialog confirm/cancel, EmptyState action,
+SeverityBadge/StatusBadge text), `tests/api.test.ts` (message from string and list
+`detail`, 401 redirect, 204), `tests/program-scoped.test.tsx` (reads `?program`,
+auto-selects a single program, empty state).
 
-Tests (`backend/tests/test_auth.py`, `test_route_protection.py`): `true` on an empty
-database, `false` after a registration, reachable without a cookie, and the
-route-protection test's list of public routes gains `/auth/status` and nothing else.
-`pytest` and `ruff check .` green.
+### 2. Backend: scan history, dashboard summary, triage fields, timestamps
+Additive only (spec §4 "HTTP API"); no migration is needed, the columns exist.
+- `GET /recon/scans?program_id=&limit=`: `ReconJobRepository.list(program_id=None,
+  limit=20)` newest first, through `ReconService`; `limit` 1–100.
+- `ReconAssetRead` gains `triage_label` (`ai_label`) and `triage_reason` (`ai_reason`).
+- `TargetRead`, `FindingRead`, `NoteRead` gain `created_at`, `updated_at`; `ProgramRead`
+  gains `updated_at`.
+- `GET /dashboard/summary`: new `app/api/dashboard.py`, `DashboardService`,
+  `app/schemas/dashboard.py`, shape exactly as in the spec. Aggregate in SQL
+  (`count`/`sum`/`group by`), not by loading rows. Requires auth. Register the router in
+  `main.py` by adding a line.
 
-### B. Frontend: make UI sign-in work
-`frontend/src/app/api/auth/login/route.ts` reads `access_token` from the backend's JSON
-body, but `POST /auth/login` returns `{id, email}` and sends the JWT in `Set-Cookie`
-(`backend/app/api/auth.py`), so every correct sign-in ends in 502. Fix the handler, not
-the backend (spec §4 "Auth flow"):
-- Take the token from the upstream `Set-Cookie` header for cookie `AUTH_COOKIE_NAME`
-  (`headers.getSetCookie()`), then set the frontend's own cookie as now. No such cookie
-  on a 2xx → 502. Keep the 401 / 422 / 502 mapping.
-- The `Secure` flag comes from `AUTH_COOKIE_SECURE === "true"` (default false), not from
-  `NODE_ENV` / `COOKIE_SECURE`. Add `AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}` to
-  the `frontend` service in `infra/docker-compose.yml` (one line; do not start the stack).
-- Check `frontend/src/app/api/auth/logout/route.ts` clears the same cookie and still
-  works against the backend's 204.
+Tests: `tests/test_dashboard.py` (empty database → zeros and every enum key present;
+seeded data → counts, `open`, `payout_cents_paid`, recent lists ordered and capped at 5,
+`ai_configured` false then true), list-scans ordering/filter/limit in the recon tests,
+asset fields after triage, timestamps in `test_bounty_api.py`, and both new routes in
+`test_route_protection.py` (401 without the cookie). `pytest` and `ruff check .` green.
 
-Tests (Vitest, new `frontend/tests/login-route.test.ts`, mocked `fetch`): 200 with the
-cookie set from an upstream `Set-Cookie`; cookie is httpOnly and not `Secure` by default,
-`Secure` when `AUTH_COOKIE_SECURE=true`; upstream 401 → 401; upstream 200 without the
-cookie → 502; backend unreachable → 502. `npm test`, `npm run lint`, `npm run build` green.
+### 3. App shell: sidebar, mobile navigation, header, auth pages  (after 1)
+Files: `app/layout.tsx`, `app/(dashboard)/layout.tsx`, new `app/(dashboard)/loading.tsx`
+and `error.tsx`, new `app/not-found.tsx`, `components/layout/*`, `features/dashboard/nav.ts`,
+`app/login/page.tsx`, `app/register/page.tsx`, `components/auth/*`.
+- Sidebar: brand mark, nav with Settings pinned at the bottom (`/settings`, built by
+  task 7), parent highlighted on nested routes, `aria-current="page"`.
+- Below `md`: top bar with a menu button opening the same nav in a sheet that closes on
+  navigation. Today there is no navigation at all on a phone.
+- Header: signed-in email (`/auth/me`), theme toggle, sign out. Content in a centred
+  `max-w-6xl` container with consistent padding.
+- Route-level loading skeleton, error boundary with retry, and a 404 page.
+- Auth pages: same card, brand and tokens; pending state on submit; show/hide password.
+  The auth flow, redirects and existing auth tests stay as they are.
+- `metadata.title` template `"%s · BountyHub"` in the root layout.
 
-### C. Frontend: `/register` page and first-run redirect
-Contract in spec §4 "Auth flow"; the backend endpoint is `GET /auth/status` →
-`{"registration_open": bool}` (task A; mock it here, do not wait for it).
-- `components/auth/register-form.tsx` in the style of `login-form.tsx`: email, password
-  (min 8), confirm password, client-side mismatch error. Add `register()` and
-  `getAuthStatus()` to `features/auth/api.ts`. Register posts to
-  `/api/backend/auth/register`, then calls the existing `login()` and goes to `/`.
-  403 → "An account already exists" with a link to `/login`; 422 → the validation message.
-- `app/register/page.tsx` in the same card layout as `/login`, titled for first-time
-  setup and saying this creates the single account for this install.
-- Server-side in both pages, fetch `${API_INTERNAL_URL}/auth/status` with
-  `cache: "no-store"`: `/login` redirects to `/register` while registration is open,
-  `/register` redirects to `/login` when it is closed. If the call fails, render the
-  page's own form; `/login` then shows a "Create account" link.
-- `middleware.ts`: `/register` is public like `/login` (signed-out visitors reach it,
-  signed-in visitors go to `/`). Keep `safeNextPath` behaviour unchanged.
-- README step "Register the single user": describe the real flow (first visit lands on
-  the create-account page; afterwards it is the sign-in page).
+Tests: `tests/shell.test.tsx` (nested route highlights its parent, menu button opens the
+nav and it lists every item, email shown). Existing auth and middleware tests untouched.
 
-Tests: `register-form.test.tsx` (success calls register then login, password mismatch,
-403 message), `middleware.test.ts` cases for `/register` signed out and signed in.
-`npm test`, `npm run lint`, `npm run build` green. Do not edit the login route handler
-(task B owns it).
+### 4. Programs: list, detail, scope and targets  (after 1)
+Files: `app/(dashboard)/programs/**`, `components/programs/*` (except `ProgramSelect`),
+`tests/programs.test.tsx`.
+- List: `PageHeader` with "New program" opening a dialog (name, platform, URL, reward
+  info: URL and reward info cannot be entered anywhere today), search, rows with
+  platform badge, reward info and created date, skeleton / empty / error states.
+- Detail: back link, edit dialog, delete with confirm (then `/programs`), links to
+  `/findings`, `/notes`, `/recon` with `?program=<id>`. Render `program.url` as a link
+  only when it is `http(s)`, with `target="_blank" rel="noopener noreferrer"`.
+- Scope tab: in and out rules grouped, type badge, add form with one line of help per
+  type (domain is exact, `*.example.com` does not cover the apex, IP or CIDR, URL path
+  prefix), delete with confirm, and a "test a host" box on `scope-check` showing the
+  verdict and reason.
+- Targets tab: list, add, edit, delete (value, description). The API exists, the UI
+  does not.
 
-### D. Rebuild, prove sign-up and sign-in end to end, reset, push  (after A, B, C)
-The only task that touches the stack. Use `scripts/stack.sh`; operate on project
-`bountyhub` only (an unrelated `agent-office` container shares the host).
-1. On `main` with A–C merged: run both test suites, then `scripts/stack.sh up`.
-2. Extend `scripts/smoke_test.py` with the checks added in spec §8: `/auth/status`
-   before and after registering, `/register` reachable in frontend mode, and the
-   `/api/auth/login` response sets the session cookie without `Secure` on an `http://`
-   URL. Keep it standard-library only and `.invalid` hostnames only.
-3. Run `python3 scripts/smoke_test.py` in frontend mode with throwaway credentials and
-   paste the full PASS/FAIL output in the hand-in. Also run it once against
-   `http://<lan-ip>:3000`. A failure is fixed in the app with a regression test, not by
-   weakening the check. No scan against a real host.
-4. The user asked for a reset: run `scripts/stack.sh reset --yes`, wait for all five
-   services, then prove the result instead of assuming it: `select count(*) from users`
-   is 0 (psql inside the postgres container), `GET /auth/status` says
-   `registration_open: true`, and `curl -I http://localhost:3000/` ends at `/register`.
-5. Commit, confirm `infra/.env` is untracked, `git push origin main` (fast-forward only),
-   check `git ls-remote origin main` equals local `main`. Report the URLs from
-   `scripts/stack.sh urls` and exactly what the user will see on first visit.
+Tests: create with all four fields, edit, delete confirm, add/remove rule, scope-check
+result shown, target CRUD, a `javascript:` URL is not rendered as a link.
+
+### 5. Findings and notes  (after 1)
+Files: `app/(dashboard)/findings/*`, `app/(dashboard)/notes/*`, `components/findings/*`,
+`components/notes/*`, `tests/findings.test.tsx`, `tests/notes.test.tsx`.
+- Findings: board by status kept, columns scroll horizontally on small screens; cards
+  with `SeverityBadge`, payout and updated time; totals strip (count, open, paid total);
+  severity filter; "New finding" dialog; clicking a card opens a dialog to edit title,
+  description (markdown), severity, status, target and payout (dollars in, cents out,
+  validated), and to delete with confirm.
+- Notes: searchable list with updated time; editor with Edit/Preview tabs (side by side
+  on wide screens) using `Markdown`; unsaved-changes indicator, Save disabled when
+  clean, Ctrl/Cmd+S saves, a confirm before switching away from unsaved edits, delete
+  with confirm, optional link to a finding of the same program.
+
+Tests: existing assertions kept; plus edit and delete a finding, payout validation,
+severity filter, note dirty state and save, delete confirm, finding link saved.
+
+### 6. Recon: launcher, history, progress and results  (after 1, 2)
+Files: `app/(dashboard)/recon/*`, `components/recon/*`, `tests/recon.test.tsx`.
+- Fix: on a 422 read `rejected_targets` from the top level of the error body and say
+  which targets were out of scope (and correct the test's mock to the real shape).
+- Fix: scores are 0–100. Show an integer; 70 and up high, 40–69 medium, below low,
+  with the label as text, not colour alone.
+- Launcher: targets textarea with a parsed-count hint, the scope note, pending state.
+- History: the program's scans from `GET /recon/scans?program_id=` with status badge,
+  target count and relative time; the selected scan lives in `?scan=<id>` so a reload
+  keeps it; a newly launched scan is selected. Polling as today, stops on a final state.
+- Selected scan: stage stepper (scope → subfinder → httpx → js_crawler →
+  secret_scanner → triage), started/finished/duration, rejected targets, `notes` as
+  warnings, `error` as an error block.
+- Results: tabs per asset type with counts; table with value (`CopyButton`), source,
+  label badge, score, reason; text filter; sorted by score; row detail showing `meta`
+  (status, title, tech for hosts). Secrets show only what the API returns.
+- "Re-run AI triage" on a completed scan (`POST /triage {job_id}`): 409 → "No AI
+  provider configured" with a link to `/settings`; 502 → the provider's message.
+- No scan is ever launched against a real host while developing or testing.
+
+Tests: existing assertions kept with the corrected 422 shape; plus history list and
+selection from `?scan`, stepper marks the current stage, score bands, filter, triage 409.
+
+### 7. Settings page: AI provider  (after 1)
+Files: new `app/(dashboard)/settings/page.tsx`, `components/settings/*`,
+`tests/settings.test.tsx`.
+- Provider choice (Claude Code token / OpenAI-compatible) and the fields of each:
+  Claude token + model; base URL + API key + model. A "saved" / "not set" badge per
+  credential from `claude_token_set` / `openai_api_key_set`.
+- Credentials are write-only: password inputs, never pre-filled, and a blank one is
+  omitted from the `PUT` (the backend rejects an empty string and treats a missing
+  field as unchanged). Help text: the token comes from `claude setup-token`.
+- Success toast, server message on failure, skeleton and error states.
+- Account card: signed-in email and sign out.
+
+Tests: loads and shows saved/not-set, a save with a blank secret omits it from the
+request body, changing provider sends `provider`, a stored secret is never rendered.
+
+### 8. Overview dashboard  (after 1, 2)
+Files: `app/(dashboard)/page.tsx`, new `components/dashboard/*`, `tests/dashboard.test.tsx`.
+- From `GET /dashboard/summary`: stat cards (programs, open findings, paid total, active
+  scans), findings by severity as CSS bars (no chart library), recent findings and
+  recent scans with badges and links.
+- No programs yet: a getting-started checklist (create a program, add scope rules,
+  configure the AI provider, run a scan) with links. `ai_configured` false: a callout
+  linking to `/settings`.
+- Skeleton, error with retry.
+
+Tests: numbers and money rendered from a mocked summary, checklist on an empty summary,
+AI callout only when `ai_configured` is false, error state with retry.
+
+### 9. Rebuild, verify and report  (after 1–8)
+The only task that touches the stack. Project `bountyhub` only. **Never run `reset`,
+never remove the volume: the database may hold the user's account** (spec §8).
+1. On `main` with 1–8 merged: `pytest`, `ruff check .`, `npm test`, `npm run lint`,
+   `npm run build`. Grep `frontend/src` for leftover raw `<input`/`<button`/`<select`
+   outside `components/ui` and for `bg-blue-`/`text-red-`; fix what is left.
+2. Extend `scripts/smoke_test.py` with the checks added in spec §8 (`/dashboard/summary`,
+   `GET /recon/scans`, `/settings` page). Standard library and `.invalid` hosts only.
+3. Run the full smoke test against a throwaway dev backend (SQLite, `127.0.0.1`, spare
+   port, stopped afterwards).
+4. `scripts/stack.sh up` to rebuild; wait for all five services. Read `GET /auth/status`
+   on the running stack. If registration is closed, run only signed-out checks there
+   (`/login` 200, `/` redirects to `/login`, an API call without the cookie is 401) and
+   do not register or sign in. If it is still open, the full smoke test with throwaway
+   credentials may run, followed by `scripts/stack.sh reset --yes` and proof that
+   `select count(*) from users` is 0.
+5. Commit on `main`. **Do not push**: the user has not asked for this round to be
+   published. Report the URLs from `scripts/stack.sh urls`, the smoke output, what was
+   and was not checked in a real browser, and that `main` is ahead of `origin/main`.
