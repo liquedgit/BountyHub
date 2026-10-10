@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api import auth, health, settings, triage
 from app.api.bounty import router as bounty_router
+from app.api.dashboard import router as dashboard_router
 from app.api.recon import router as recon_router
 from app.core.config import get_settings
 from app.jobs.queue import ArqJobQueue, JobQueue
@@ -36,6 +37,7 @@ def create_app(job_queue: JobQueue | None = None) -> FastAPI:
     app.include_router(triage.router)
     app.include_router(bounty_router)
     app.include_router(recon_router)
+    app.include_router(dashboard_router)
     return app
 
 

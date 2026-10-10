@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -50,6 +50,15 @@ async def create_scan(
         ReconJobRepository(db).mark_finished(job, error="could not enqueue job")
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job queue unavailable") from e
     return job
+
+
+@router.get("", response_model=list[ReconJobRead])
+def list_scans(
+    program_id: int | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    service: ReconService = Depends(get_recon_service),
+):
+    return service.list_jobs(program_id=program_id, limit=limit)
 
 
 @router.get("/{job_id}", response_model=ReconJobRead)

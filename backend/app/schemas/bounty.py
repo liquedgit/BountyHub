@@ -30,6 +30,7 @@ class ProgramUpdate(BaseModel):
 class ProgramRead(ORM, ProgramBase):
     id: int
     created_at: datetime
+    updated_at: datetime
 
 
 class ScopeRuleCreate(BaseModel):
@@ -62,6 +63,8 @@ class TargetUpdate(BaseModel):
 class TargetRead(ORM, TargetCreate):
     id: int
     program_id: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class FindingCreate(BaseModel):
@@ -85,6 +88,8 @@ class FindingUpdate(BaseModel):
 class FindingRead(ORM, FindingCreate):
     id: int
     program_id: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class NoteCreate(BaseModel):
@@ -102,6 +107,8 @@ class NoteUpdate(BaseModel):
 class NoteRead(ORM, NoteCreate):
     id: int
     program_id: int
+    created_at: datetime
+    updated_at: datetime
 
 
 class ScopeCheckRequest(BaseModel):
