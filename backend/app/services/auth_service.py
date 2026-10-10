@@ -60,8 +60,11 @@ class AuthService:
             raise AuthError("Invalid token") from exc
 
     # --- use cases ---
+    def registration_open(self) -> bool:
+        return self._users.count() == 0
+
     def register(self, email: str, password: str) -> User:
-        if self._users.count() > 0:
+        if not self.registration_open():
             raise RegistrationClosedError("Registration is closed")
         return self._users.create(email, self.hash_password(password))
 
