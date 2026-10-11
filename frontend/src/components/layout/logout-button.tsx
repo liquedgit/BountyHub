@@ -11,13 +11,15 @@ export function LogoutButton() {
     <Button
       variant="ghost"
       size="sm"
+      aria-label="Sign out"
       onClick={async () => {
         await logout();
         router.replace("/login");
         router.refresh();
       }}
     >
-      <LogOut className="h-4 w-4" /> Sign out
+      <LogOut className="h-4 w-4" aria-hidden />
+      <span className="hidden sm:inline">Sign out</span>
     </Button>
   );
 }
