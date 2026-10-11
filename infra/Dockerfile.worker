@@ -21,4 +21,7 @@ RUN apt-get update \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
+RUN useradd --system --uid 10001 --create-home --home-dir /home/app app
+USER app
+ENV HOME=/home/app
 CMD ["arq", "app.worker.WorkerSettings"]

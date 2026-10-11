@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bountyhub}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
       POSTGRES_DB: ${POSTGRES_DB:-bountyhub}
+    networks: [internal]
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,6 +20,7 @@ services:
   redis:
     image: docker.io/library/redis:7-alpine
     restart: unless-stopped
+    networks: [internal]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -29,12 +31,17 @@ services:
     build:
       context: ../backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [internal]
     environment: &backend-env
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-bountyhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@postgres:5432/${POSTGRES_DB:-bountyhub}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in infra/.env}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       REDIS_URL: redis://redis:6379/0
-      APP_ENV: development
+      APP_ENV: ${APP_ENV:-production}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -54,6 +61,9 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.worker
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks: [internal]
     environment: *backend-env
     depends_on:
       postgres:
@@ -65,15 +75,53 @@ services:
     build:
       context: ../frontend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [edge, internal]
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
       API_INTERNAL_URL: http://backend:8000
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
     ports:
-      - "3000:3000"
+      - "${FRONTEND_BIND:-0.0.0.0}:3000:3000"
     depends_on:
       backend:
         condition: service_healthy
+
+  # Quick tunnel: random https://<words>.trycloudflare.com URL, new on every start.
+  tunnel:
+    image: docker.io/cloudflare/cloudflared:2026.10.0
+    profiles: [tunnel-quick]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://frontend:3000
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [edge]
+    depends_on:
+      - frontend
+
+  # Named tunnel: stable hostname configured in the Cloudflare dashboard.
+  tunnel-named:
+    image: docker.io/cloudflare/cloudflared:2026.10.0
+    profiles: [tunnel-named]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [edge]
+    depends_on:
+      - frontend
+
+networks:
+  edge:
+  internal:
 
 volumes:
   pgdata:
