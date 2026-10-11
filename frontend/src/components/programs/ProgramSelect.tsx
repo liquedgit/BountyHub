@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 
 export function ProgramSelect({
@@ -12,11 +14,11 @@ export function ProgramSelect({
 }) {
   const { data: programs = [] } = useQuery({ queryKey: ["programs"], queryFn: api.programs.list });
   return (
-    <label className="flex items-center gap-2 text-sm">
-      Program
-      <select
-        aria-label="Program"
-        className="rounded border bg-transparent px-2 py-1"
+    <div className="flex items-center gap-2">
+      <Label htmlFor="program-select">Program</Label>
+      <Select
+        id="program-select"
+        className="w-auto min-w-[12rem]"
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
       >
@@ -26,7 +28,7 @@ export function ProgramSelect({
             {p.name}
           </option>
         ))}
-      </select>
-    </label>
+      </Select>
+    </div>
   );
 }
