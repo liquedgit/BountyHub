@@ -27,7 +27,6 @@ and never prints a password, cookie or token.
 
 import argparse
 import base64
-import http.cookiejar
 import json
 import os
 import re
@@ -48,7 +47,7 @@ LEAK_PATTERNS = [
     (re.compile(r'File "[^"]+", line \d+'), "stack trace"),
     (re.compile(r"(/home/|/usr/|/app/|/srv/|/opt/|[A-Za-z]:\\)[\w./\\-]+"), "file path"),
     (re.compile(r"\.py\b"), "python file name"),
-    (re.compile(r"\b(sqlalchemy|psycopg|sqlite3?|asyncpg|alembic)\b", re.I), "database library"),
+    (re.compile(r"\b(sqlalchemy|psycopg|sqlite3?|asyncpg|alembic)\b", re.IGNORECASE), "database library"),
     (re.compile(r"\b(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b[^\"]{0,80}\b(FROM|VALUES|SET|WHERE)\b"), "SQL"),
 ]
 PROTECTED = [  # sample of spec §4 routes; writes carry an empty body so nothing can be created
@@ -395,7 +394,7 @@ def check_data_2(c, rep, me):
     if st.json != {"registration_open": False}:
         problems.append("/auth/status is not exactly {registration_open: false}")
     for label, text in (("/auth/me", me.text), ("/auth/status", st.text)):
-        if re.search(r"argon2|\$2[aby]\$|hash|password", text, re.I):
+        if re.search(r"argon2|\$2[aby]\$|hash|password", text, re.IGNORECASE):
             problems.append(f"{label} mentions a hash or password")
     rep.check("DATA-2", "/auth/me and /auth/status carry no hash and no user count",
               not problems, "; ".join(problems))
