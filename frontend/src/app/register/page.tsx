@@ -1,26 +1,20 @@
 import { redirect } from "next/navigation";
+import { AuthCard } from "@/components/auth/auth-card";
 import { RegisterForm } from "@/components/auth/register-form";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchRegistrationOpen } from "@/lib/registration-status";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Create account" };
 
 export default async function RegisterPage() {
   if ((await fetchRegistrationOpen()) === false) redirect("/login");
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Welcome to BountyHub</CardTitle>
-          <CardDescription>
-            First-time setup: create the single account for this install.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <RegisterForm />
-        </CardContent>
-      </Card>
-    </main>
+    <AuthCard
+      title="Welcome to BountyHub"
+      description="First-time setup: create the single account for this install."
+    >
+      <RegisterForm />
+    </AuthCard>
   );
 }
