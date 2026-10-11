@@ -17,11 +17,8 @@ router = APIRouter(
 )
 
 
-def get_job_queue(request: Request) -> JobQueue:
-    queue = getattr(request.app.state, "job_queue", None)
-    if queue is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job queue unavailable")
-    return queue
+def get_job_queue(request: Request) -> JobQueue | None:
+    return getattr(request.app.state, "job_queue", None)
 
 
 def get_recon_service(db: Session = Depends(get_db)) -> ReconService:
@@ -32,7 +29,7 @@ def get_recon_service(db: Session = Depends(get_db)) -> ReconService:
 async def create_scan(
     body: ReconScanCreate,
     service: ReconService = Depends(get_recon_service),
-    queue: JobQueue = Depends(get_job_queue),
+    queue: JobQueue | None = Depends(get_job_queue),
     db: Session = Depends(get_db),
 ):
     try:
@@ -44,6 +41,10 @@ async def create_scan(
             status_code=422,
             content={"detail": str(e), "rejected_targets": e.rejected_targets},
         )
+    # Checked after scope and the network guard so a refused target is a 422 either way.
+    if queue is None:
+        ReconJobRepository(db).mark_finished(job, error="could not enqueue job")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "job queue unavailable")
     try:
         await queue.enqueue_recon_job(job.id)
     except Exception as e:  # noqa: BLE001

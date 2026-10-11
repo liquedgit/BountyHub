@@ -177,6 +177,16 @@ def test_enqueue_failure_marks_job_failed(db_session, program):
     assert db_session.query(ReconJob).one().status == "failed"
 
 
+def test_refused_target_is_422_even_without_a_queue(db_session, program):
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: object()
+    with TestClient(app) as c:
+        r = c.post("/recon/scans", json={"program_id": program.id, "targets": ["evil.com"]})
+    assert r.status_code == 422
+    assert r.json()["rejected_targets"] == ["evil.com"]
+
+
 def test_assets_endpoint_field_names(api, db_session, program):
     svc = service(db_session, FakeTool("subfinder", [sub("api.example.com")]), FakeTool("httpx"))
     job = svc.create_job(program.id, ["example.com"])
