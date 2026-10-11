@@ -1,210 +1,153 @@
 # BountyHub — Backlog
 
 Each task is independently implementable (~15 tool turns incl. tests) and branches from
-`main`.
+`main`. The contract for this round is spec §9; case ids (AUTH-1 …) are in §9.6.
 
 ```
-1  frontend foundation (UI kit, API client) ─┬─► 3  app shell + auth pages ───────┐
-                                             ├─► 4  programs ─────────────────────┤
-                                             ├─► 5  findings + notes ─────────────┤
-                                             ├─► 7  settings (AI provider) ───────┼─► 9  rebuild, verify
-2  backend read endpoints ──┬────────────────┼─► 6  recon (needs 1 and 2) ────────┤
-                            └────────────────┴─► 8  overview (needs 1 and 2) ─────┘
+1  backend: login throttle, JWT/secret checks ─────┐
+2  backend: response hygiene, docs closed, sweep ──┤
+3  backend: recon network guard ───────────────────┤
+4  frontend: headers, origin check, login handler ─┼─► 7  deploy on the tunnel, verify, report
+5  infra: cloudflared service, stack.sh tunnel ────┤
+6  scripts/security_check.py + SECURITY_TESTS.md ──┘
 ```
 
-1 and 2 start now, in parallel. 3–8 run in parallel once their prerequisites are merged.
+1–6 start now, in parallel. 7 waits for all of them.
 
-Rules for tasks 1–8 (spec §4 "UI system", §8 "Working in parallel on one host"):
+Rules for tasks 1–6 (spec §8 "Working in parallel on one host"):
 - Never `up`, `down`, `build` or wipe the `bountyhub` stack, never touch the main
-  checkout's `infra/.env`, never push. Task 9 is the only one that touches the stack.
-- File ownership, so parallel branches merge cleanly. Only task 1 edits
-  `frontend/package.json`, `package-lock.json`, `src/lib/api.ts`, `src/lib/types.ts`,
-  `src/components/ui/*`, `src/components/common/*`, `globals.css`, `tailwind.config.ts`.
-  Tasks 3–8 edit only the files named in their section; a missing primitive is a **new**
-  file, a missing API method or type is reported in the hand-in, not patched in place.
-- Frontend tasks finish with `npm test`, `npm run lint` and `npm run build` green.
-- No raw `<input>`/`<button>`/`<select>` and no hard-coded colour classes in feature code.
+  checkout's `infra/.env`, never push, never start a tunnel. Task 7 is the only one.
+- **The running instance holds the user's account.** Never register, sign in or send
+  failed logins to it. Use a throwaway dev backend (SQLite, `127.0.0.1`, spare port).
+- File ownership: 1 → `app/api/auth.py`, `app/services/auth_service.py`,
+  `app/services/login_throttle.py`, `tests/test_auth*.py`; 2 → `app/main.py` handlers
+  and middleware, `app/core/http.py`, `app/schemas/settings.py`, `tests/test_hardening.py`,
+  `tests/test_response_sweep.py`, `tests/test_route_protection.py`; 3 → `app/recon/*`,
+  `app/services/recon.py`, recon tests; 4 → `frontend/**` except `Dockerfile`; 5 →
+  `infra/**`, `*/Dockerfile`, `scripts/stack.sh`, `README.md`; 6 →
+  `scripts/security_check.py`, `docs/SECURITY_TESTS.md`.
+  `app/core/config.py` and `app/main.py` are shared: add lines, never rewrite.
+- No real network calls in tests; no recon against a real host, ever.
 
 ## Done
 1–16. Backend, recon pipeline, AI triage, first frontend, migrations, worker image.
-17–22. Published to GitHub as `main`, stack running, `scripts/stack.sh`, `scripts/smoke_test.py`.
-23–26. `/auth/status`, working sign-in, `/register` first-run page, verified and pushed.
+17–26. Published to GitHub as `main`, stack running, operator scripts, sign-up/sign-in.
+27–35. UI and behaviour pass, rebuilt and verified (not pushed).
 
-## Open — UI and behaviour pass (spec §3 lists what is wrong today)
+## Open — Cloudflare Tunnel and hardening
 
-### 1. Frontend foundation: UI kit, shared states, one API client
-Everything tasks 3–8 build on. No page redesign here; existing pages must keep working.
-- Tokens: add `success`, `warning`, `info` (with `-foreground`) to `globals.css` and
-  `tailwind.config.ts`. Default theme dark (`providers.tsx`), toggle kept.
-- Dependencies (the only task that adds any): `@radix-ui/react-dialog`,
-  `@radix-ui/react-tabs`, `sonner`.
-- `components/ui/`: add textarea, select (styled native), badge (default, secondary,
-  outline, success, warning, info, destructive), table, tabs, dialog, sheet, skeleton,
-  toaster; make sure button has `outline`, `ghost`, `destructive` variants and an `icon`
-  size. Mount the toaster in `providers.tsx`.
-- `components/common/`: `PageHeader`, `EmptyState`, `ErrorState`, `ListSkeleton`,
-  `ConfirmDialog`, `StatCard`, `SeverityBadge`, `StatusBadge`, `CopyButton`, `Markdown`.
-  `lib/format.ts`: `formatDate`, `formatRelative`, `formatMoney(cents)`, `formatDuration`.
-- `lib/api.ts`: one `ApiError(status, message, body)` with the message from `detail`
-  (string or validation list), `errorMessage(err)`, 401 → `/login?next=<path>` except on
-  the login call. `lib/api-client.ts` re-exports from it; `features/auth/api.ts` keeps
-  working. Add methods for the whole contract in spec §4: `api.targets`,
-  `api.programs.scopeCheck`, `api.recon.list(programId?)`, `api.dashboard.summary`,
-  `api.settings.getAI/updateAI`, `api.triage.run(jobId)`.
-- `lib/types.ts`: `Target`, `AISettings`, `AISettingsUpdate`, `DashboardSummary`,
-  `ScopeCheckResult`; `created_at`/`updated_at` on program, target, finding, note;
-  `triage_label`, `triage_reason` on `ReconAsset`.
-- `providers.tsx`: React Query defaults (`refetchOnWindowFocus: false`, `retry: 1`) and a
-  mutation-cache `onError` that toasts `errorMessage(err)` unless `meta.silent` is set.
-- `ProgramScoped` / `ProgramSelect`: selection in `?program=<id>` and `localStorage`,
-  auto-select when there is one program, `EmptyState` linking to `/programs` when there
-  are none. `useSearchParams` needs a `<Suspense>` boundary or `npm run build` fails.
-- Split `tests/features.test.tsx` into `tests/{programs,findings,notes,recon}.test.tsx`
-  (same assertions) and delete it.
+### 1. Backend: login throttle, timing-equal login, JWT and secret checks
+Spec §9.2. Cases AUTH-2, AUTH-4, AUTH-6, AUTH-7.
+- `LoginThrottle` (in-process, injectable clock, one instance on `app.state` created in
+  `create_app`): 5 failures per client per 15 min, global ceiling 50; 429 with
+  `Retry-After`; checked before the hash is verified; success clears the client's count.
+  Client key: `CF-Connecting-IP`, else last hop of `X-Forwarded-For`, else peer address.
+  Settings `login_max_failures`, `login_window_seconds`, `login_global_max_failures`.
+- Unknown email spends one argon2 verification against a dummy hash; same 401 body.
+- Start-up check: `APP_ENV` not `development` and `JWT_SECRET` shorter than 32 chars or
+  starting with `change-me` → the app refuses to start (a clear error, not the secret).
 
-Tests: `tests/ui-kit.test.tsx` (ConfirmDialog confirm/cancel, EmptyState action,
-SeverityBadge/StatusBadge text), `tests/api.test.ts` (message from string and list
-`detail`, 401 redirect, 204), `tests/program-scoped.test.tsx` (reads `?program`,
-auto-selects a single program, empty state).
+Tests: throttle (6th attempt, correct password while locked, other client, reset on
+success, window expiry with a fake clock, global ceiling, header precedence), JWT
+tampered / expired / other secret / `alg: none` / garbage → 401, secret check.
 
-### 2. Backend: scan history, dashboard summary, triage fields, timestamps
-Additive only (spec §4 "HTTP API"); no migration is needed, the columns exist.
-- `GET /recon/scans?program_id=&limit=`: `ReconJobRepository.list(program_id=None,
-  limit=20)` newest first, through `ReconService`; `limit` 1–100.
-- `ReconAssetRead` gains `triage_label` (`ai_label`) and `triage_reason` (`ai_reason`).
-- `TargetRead`, `FindingRead`, `NoteRead` gain `created_at`, `updated_at`; `ProgramRead`
-  gains `updated_at`.
-- `GET /dashboard/summary`: new `app/api/dashboard.py`, `DashboardService`,
-  `app/schemas/dashboard.py`, shape exactly as in the spec. Aggregate in SQL
-  (`count`/`sum`/`group by`), not by loading rows. Requires auth. Register the router in
-  `main.py` by adding a line.
+### 2. Backend: docs closed, safe errors, response headers, credential sweep
+Spec §9.2. Cases AUTH-1, DATA-1, DATA-2, DATA-3, DATA-5, DATA-6, EXP-2.
+- `docs_url`/`redoc_url`/`openapi_url` `None` unless `EXPOSE_DOCS=true`.
+- Handlers: unhandled exception → `500 {"detail": "Internal server error"}`;
+  `RequestValidationError` → 422 list with `type`, `loc`, `msg` only.
+- Middleware adding `X-Content-Type-Options`, `Cache-Control: no-store`,
+  `Referrer-Policy` to every response. No CORS middleware.
+- `openai_base_url` must be an `http(s)` URL.
+- `tests/test_response_sweep.py`: register with a sentinel password, store sentinel
+  Claude token and API key, seed one row of everything, call every `GET` route found by
+  walking `app.routes`; no body may contain a sentinel, `$argon2`, or the session JWT.
+  Also assert no response schema in `app.openapi()` has a property named `password`,
+  `hashed_password`, `token`, `access_token`, `api_key` or `secret` (`*_set` allowed).
 
-Tests: `tests/test_dashboard.py` (empty database → zeros and every enum key present;
-seeded data → counts, `open`, `payout_cents_paid`, recent lists ordered and capped at 5,
-`ai_configured` false then true), list-scans ordering/filter/limit in the recon tests,
-asset fields after triage, timestamps in `test_bounty_api.py`, and both new routes in
-`test_route_protection.py` (401 without the cookie). `pytest` and `ruff check .` green.
+Tests: the sweep, docs 404, 500 and 422 bodies (password not echoed), headers on a
+normal and an error response, no `Access-Control-Allow-Origin` for a foreign `Origin`.
 
-### 3. App shell: sidebar, mobile navigation, header, auth pages  (after 1)
-Files: `app/layout.tsx`, `app/(dashboard)/layout.tsx`, new `app/(dashboard)/loading.tsx`
-and `error.tsx`, new `app/not-found.tsx`, `components/layout/*`, `features/dashboard/nav.ts`,
-`app/login/page.tsx`, `app/register/page.tsx`, `components/auth/*`.
-- Sidebar: brand mark, nav with Settings pinned at the bottom (`/settings`, built by
-  task 7), parent highlighted on nested routes, `aria-current="page"`.
-- Below `md`: top bar with a menu button opening the same nav in a sheet that closes on
-  navigation. Today there is no navigation at all on a phone.
-- Header: signed-in email (`/auth/me`), theme toggle, sign out. Content in a centred
-  `max-w-6xl` container with consistent padding.
-- Route-level loading skeleton, error boundary with retry, and a 404 page.
-- Auth pages: same card, brand and tokens; pending state on submit; show/hide password.
-  The auth flow, redirects and existing auth tests stay as they are.
-- `metadata.title` template `"%s · BountyHub"` in the root layout.
+### 3. Backend: recon network guard
+Spec §9.3. Cases SSRF-1, SSRF-2.
+- `app/recon/netguard.py`: `NetworkGuard(resolver, allow_private)` with
+  `check_target(value)` and `check_resolved(host)`; `Resolver` protocol, real one on
+  `socket.getaddrinfo` with a timeout. Block list and name rules as in the spec.
+- `ReconService`: guard after the scope partition at submission and before every stage;
+  dropped targets go to `rejected_targets` with the `blocked: …` reason; 422 when
+  nothing is left. `HttpFetcher`: guard the first URL and every redirect hop.
+- Setting `recon_allow_private_targets` (default false).
 
-Tests: `tests/shell.test.tsx` (nested route highlights its parent, menu button opens the
-nav and it lists every item, email shown). Existing auth and middleware tests untouched.
+Tests with a fake resolver and the fake runner/fetcher: each blocked literal and name is
+rejected although an `in` rule covers it and no tool is invoked; a public name resolving
+to `10.0.0.5` is dropped before httpx; a redirect to `127.0.0.1` is not followed; a name
+with one public and one private address is dropped; the flag turns the guard off.
 
-### 4. Programs: list, detail, scope and targets  (after 1)
-Files: `app/(dashboard)/programs/**`, `components/programs/*` (except `ProgramSelect`),
-`tests/programs.test.tsx`.
-- List: `PageHeader` with "New program" opening a dialog (name, platform, URL, reward
-  info: URL and reward info cannot be entered anywhere today), search, rows with
-  platform badge, reward info and created date, skeleton / empty / error states.
-- Detail: back link, edit dialog, delete with confirm (then `/programs`), links to
-  `/findings`, `/notes`, `/recon` with `?program=<id>`. Render `program.url` as a link
-  only when it is `http(s)`, with `target="_blank" rel="noopener noreferrer"`.
-- Scope tab: in and out rules grouped, type badge, add form with one line of help per
-  type (domain is exact, `*.example.com` does not cover the apex, IP or CIDR, URL path
-  prefix), delete with confirm, and a "test a host" box on `scope-check` showing the
-  verdict and reason.
-- Targets tab: list, add, edit, delete (value, description). The API exists, the UI
-  does not.
+### 4. Frontend: security headers, same-origin check, login handler
+Spec §9.4. Cases HDR-1, HDR-2, INJ-1, INJ-2, INJ-3.
+- `next.config.mjs`: `poweredByHeader: false`, `headers()` as specified. `app/robots.ts`.
+- `middleware.ts`: matcher also covers `/api/:path*`; for those paths only the
+  same-origin check runs (no login redirect). Existing page behaviour unchanged.
+- `app/api/auth/login/route.ts`: validate the body shape, forward `CF-Connecting-IP` and
+  `X-Forwarded-For`, pass 429 on with `Retry-After`; the login form shows the message.
+- Check `Markdown` and `safeNextPath` against INJ-2 / INJ-3 and fix what fails.
 
-Tests: create with all four fields, edit, delete confirm, add/remove rule, scope-check
-result shown, target CRUD, a `javascript:` URL is not rendered as a link.
+Tests (`tests/security.test.ts(x)`, plus the existing middleware and login-route tests):
+header set from the config, foreign-origin POST → 403, same-origin and header-less POST
+pass, 429 passed through, bad body 400, markdown and `next` cases. `npm test`,
+`npm run lint`, `npm run build` green; confirm the built app still renders with the CSP
+(`npm run start` on a spare port, fetch `/login`, no CSP-blocked inline script in the
+HTML that the policy would refuse).
 
-### 5. Findings and notes  (after 1)
-Files: `app/(dashboard)/findings/*`, `app/(dashboard)/notes/*`, `components/findings/*`,
-`components/notes/*`, `tests/findings.test.tsx`, `tests/notes.test.tsx`.
-- Findings: board by status kept, columns scroll horizontally on small screens; cards
-  with `SeverityBadge`, payout and updated time; totals strip (count, open, paid total);
-  severity filter; "New finding" dialog; clicking a card opens a dialog to edit title,
-  description (markdown), severity, status, target and payout (dollars in, cents out,
-  validated), and to delete with confirm.
-- Notes: searchable list with updated time; editor with Edit/Preview tabs (side by side
-  on wide screens) using `Markdown`; unsaved-changes indicator, Save disabled when
-  clean, Ctrl/Cmd+S saves, a confirm before switching away from unsaved edits, delete
-  with confirm, optional link to a finding of the same program.
+### 5. Infra: cloudflared service, networks, `stack.sh tunnel`, container hardening
+Spec §9.1. Cases EXP-1, EXP-3, REC-1.
+- Compose: `tunnel` and `tunnel-named` services behind profiles, pinned image tag,
+  networks `edge` / `internal`, `${FRONTEND_BIND:-0.0.0.0}:3000:3000`,
+  `APP_ENV=${APP_ENV:-production}`, `security_opt`, `cap_drop`. Must still work on podman
+  and on real Docker, and `stack.sh up` with the tunnel off must behave as today.
+- Dockerfiles: non-root user for frontend (`node`), backend and worker (subfinder needs
+  a writable `$HOME`); drop the unused `NEXT_PUBLIC_API_URL` build arg and env.
+- `scripts/stack.sh`: `tunnel up|down|url|status`, tunnel mode read from the env file on
+  every compose call, registration gate, `urls` shows the public URL. Editing the env
+  file touches the `BOUNTYHUB_TUNNEL` line only.
+- `infra/.env.example`: `BOUNTYHUB_TUNNEL=off`, `TUNNEL_TOKEN=`, `PUBLIC_HOSTNAME=`.
+- README "Public access": quick tunnel, named tunnel + Cloudflare Access step by step,
+  what tunnel mode changes (LAN URL closed), reboot behaviour.
+- Verify without the stack: `compose config` for off / quick / named against a temp env
+  file (`BOUNTYHUB_ENV_FILE`), `bash -n`, shellcheck if installed, the env-line edit on a
+  temp file. Images may be built to a throwaway tag (`bountyhub-check-*`) to prove the
+  non-root users start; remove exactly those tags afterwards.
 
-Tests: existing assertions kept; plus edit and delete a finding, payout validation,
-severity filter, note dirty state and save, delete confirm, finding link saved.
+### 6. `scripts/security_check.py` and `docs/SECURITY_TESTS.md`
+Spec §9.5, §9.6. Written from the spec, so it can be built while 1–5 are open.
+- The script with both modes, the localhost-only guard on `--mode full`, check names
+  carrying the case ids. Signed-out: AUTH-1 (sample of routes from spec §4), AUTH-3,
+  DATA-5, DATA-6, EXP-2, HDR-1, HDR-2, INJ-3. Full adds AUTH-2, AUTH-4, AUTH-5, DATA-1,
+  DATA-2, SSRF-1 (422 on a scan of `127.0.0.1` with a covering rule).
+- `docs/SECURITY_TESTS.md`: every case in §9.6 with steps, expected result and where it
+  is automated, the manual commands for EXP-1, EXP-3, SEC-1, REC-1, and the known limits
+  (quick tunnel without Access, JWT valid until expiry, `unsafe-inline` in the CSP,
+  `pd-httpx` re-resolving).
+- Try it against a throwaway dev backend from `main`; checks for work not merged yet are
+  expected to fail there, say which in the hand-in.
 
-### 6. Recon: launcher, history, progress and results  (after 1, 2)
-Files: `app/(dashboard)/recon/*`, `components/recon/*`, `tests/recon.test.tsx`.
-- Fix: on a 422 read `rejected_targets` from the top level of the error body and say
-  which targets were out of scope (and correct the test's mock to the real shape).
-- Fix: scores are 0–100. Show an integer; 70 and up high, 40–69 medium, below low,
-  with the label as text, not colour alone.
-- Launcher: targets textarea with a parsed-count hint, the scope note, pending state.
-- History: the program's scans from `GET /recon/scans?program_id=` with status badge,
-  target count and relative time; the selected scan lives in `?scan=<id>` so a reload
-  keeps it; a newly launched scan is selected. Polling as today, stops on a final state.
-- Selected scan: stage stepper (scope → subfinder → httpx → js_crawler →
-  secret_scanner → triage), started/finished/duration, rejected targets, `notes` as
-  warnings, `error` as an error block.
-- Results: tabs per asset type with counts; table with value (`CopyButton`), source,
-  label badge, score, reason; text filter; sorted by score; row detail showing `meta`
-  (status, title, tech for hosts). Secrets show only what the API returns.
-- "Re-run AI triage" on a completed scan (`POST /triage {job_id}`): 409 → "No AI
-  provider configured" with a link to `/settings`; 502 → the provider's message.
-- No scan is ever launched against a real host while developing or testing.
-
-Tests: existing assertions kept with the corrected 422 shape; plus history list and
-selection from `?scan`, stepper marks the current stage, score bands, filter, triage 409.
-
-### 7. Settings page: AI provider  (after 1)
-Files: new `app/(dashboard)/settings/page.tsx`, `components/settings/*`,
-`tests/settings.test.tsx`.
-- Provider choice (Claude Code token / OpenAI-compatible) and the fields of each:
-  Claude token + model; base URL + API key + model. A "saved" / "not set" badge per
-  credential from `claude_token_set` / `openai_api_key_set`.
-- Credentials are write-only: password inputs, never pre-filled, and a blank one is
-  omitted from the `PUT` (the backend rejects an empty string and treats a missing
-  field as unchanged). Help text: the token comes from `claude setup-token`.
-- Success toast, server message on failure, skeleton and error states.
-- Account card: signed-in email and sign out.
-
-Tests: loads and shows saved/not-set, a save with a blank secret omits it from the
-request body, changing provider sends `provider`, a stored secret is never rendered.
-
-### 8. Overview dashboard  (after 1, 2)
-Files: `app/(dashboard)/page.tsx`, new `components/dashboard/*`, `tests/dashboard.test.tsx`.
-- From `GET /dashboard/summary`: stat cards (programs, open findings, paid total, active
-  scans), findings by severity as CSS bars (no chart library), recent findings and
-  recent scans with badges and links.
-- No programs yet: a getting-started checklist (create a program, add scope rules,
-  configure the AI provider, run a scan) with links. `ai_configured` false: a callout
-  linking to `/settings`.
-- Skeleton, error with retry.
-
-Tests: numbers and money rendered from a mocked summary, checklist on an empty summary,
-AI callout only when `ai_configured` is false, error state with retry.
-
-### 9. Rebuild, verify and report  (after 1–8)
-The only task that touches the stack. Project `bountyhub` only. **Never run `reset`,
-never remove the volume: the database may hold the user's account** (spec §8).
-1. On `main` with 1–8 merged: `pytest`, `ruff check .`, `npm test`, `npm run lint`,
-   `npm run build`. Grep `frontend/src` for leftover raw `<input`/`<button`/`<select`
-   outside `components/ui` and for `bg-blue-`/`text-red-`; fix what is left.
-2. Extend `scripts/smoke_test.py` with the checks added in spec §8 (`/dashboard/summary`,
-   `GET /recon/scans`, `/settings` page). Standard library and `.invalid` hosts only.
-3. Run the full smoke test against a throwaway dev backend (SQLite, `127.0.0.1`, spare
-   port, stopped afterwards).
-4. `scripts/stack.sh up` to rebuild; wait for all five services. Read `GET /auth/status`
-   on the running stack. If registration is closed, run only signed-out checks there
-   (`/login` 200, `/` redirects to `/login`, an API call without the cookie is 401) and
-   do not register or sign in. If it is still open, the full smoke test with throwaway
-   credentials may run, followed by `scripts/stack.sh reset --yes` and proof that
-   `select count(*) from users` is 0.
-5. Commit on `main`. **Do not push**: the user has not asked for this round to be
-   published. Report the URLs from `scripts/stack.sh urls`, the smoke output, what was
-   and was not checked in a real browser, and that `main` is ahead of `origin/main`.
+### 7. Deploy on Cloudflare Tunnel, verify, report  (after 1–6)
+The only task that touches the stack. Project `bountyhub` only. **Never `reset`, never
+remove the volume, never sign in on the user's instance.**
+1. On `main` with 1–6 merged: `pytest`, `ruff check .`, `npm test`, `npm run lint`,
+   `npm run build`. Fix what the merge broke.
+2. `security_check.py --mode full --backend-url` against a throwaway dev backend
+   (SQLite, `127.0.0.1`, spare port, stopped afterwards). Every check must pass; fix the
+   code or the script, whichever is wrong against spec §9.
+3. `scripts/stack.sh up`, all services healthy, then `scripts/stack.sh tunnel up`
+   (quick tunnel unless `TUNNEL_TOKEN` is set). `/auth/status` must still say closed.
+4. `security_check.py --mode signed-out` against `http://localhost:3000` and against the
+   public URL. Manual cases: EXP-1 (`ss -ltn`, `compose config`, network membership),
+   EXP-3 (`id -u` in each container), SEC-1 (git history and tracked files for secret
+   patterns, `docker logs` of each service, `.next/static`, mode of `infra/.env`),
+   REC-1 (`stack.sh restart`, tunnel back, user count unchanged by a read-only
+   `select count(*) from users`).
+5. Fill the result column of `docs/SECURITY_TESTS.md` (pass / fail / not run, with the
+   date). Commit on `main`. **Do not push**: the user has not asked.
+6. Report: the public URL, that a quick-tunnel URL changes on restart, what passed, what
+   failed or was not run, the known limits, and how to move to a named tunnel + Access.

@@ -40,6 +40,8 @@ In:
 - AI triage: two interchangeable providers — (a) Claude via `claude setup-token` session
   auth, (b) any OpenAI-compatible API via API key. Provider chosen in settings.
 - Docker Compose brings up the whole stack with recon tools installed in the worker image.
+- Public access through Cloudflare Tunnel, with the hardening and the security test
+  list in §9. Only the frontend is exposed; the API is reached through its rewrite.
 - A consistent, responsive UI (§4 "UI system"): overview dashboard with real numbers,
   full create/edit/delete for programs, scope rules, targets, findings and notes, scan
   history with a stage-by-stage progress view and a filterable results table, and a
@@ -51,48 +53,42 @@ Out (future):
 - Live WebSocket streaming (MVP uses polling of job status/results).
 - Light-theme polish beyond "readable", charts libraries, drag-and-drop boards.
 
-## 3. Current state (2026-10-10)
+## 3. Current state (2026-10-11)
 
-Office tasks #1–#26 are merged, `main` is in sync with `origin/main`, and the `bountyhub`
-stack is running. Sign-up (`/register`, first run only) and sign-in work. The user may
-have registered their account by now: **the database is theirs, never reset it.**
+Office tasks #1–#35 are merged. The UI pass is done and the `bountyhub` stack is running
+on the laptop. `main` is 26 commits ahead of `origin/main` (the UI pass was not pushed).
+`GET /auth/status` on the running stack answers `registration_open: false`: **the user
+has an account. The database is theirs, never reset it, never sign in on it.**
 
-The user asked for a full UI and behaviour pass ("refine the UI, make it better overall",
-then "do all" to: consistency, cleaner sidebar and layout, informative dashboard, loading /
-empty / error states, better recon results, responsive polish, existing dark theme).
-What reading the frontend (about 1,400 lines) shows today:
+The user now wants the app reachable through **Cloudflare Tunnel**, hardened first, with
+a written list of security test cases. They accepted the proposed plan and test list
+without naming a domain, so the default is a **quick tunnel** (`*.trycloudflare.com`);
+a named tunnel with Cloudflare Access is supported as soon as they put a `TUNNEL_TOKEN`
+in `infra/.env` (§9).
 
-- **No design consistency.** The auth pages use the shadcn primitives; every feature
-  component uses raw `<input>`/`<button>` with hard-coded `bg-blue-600`, `text-red-500`,
-  `opacity-70`. Page titles differ in weight between pages.
-- **No navigation below the `md` breakpoint**: the sidebar is `hidden md:block` and
-  nothing replaces it. The active link is an exact match, so `/programs/12` highlights
-  nothing.
-- **Overview is a placeholder card** with no data.
-- **Features the backend has but the UI does not:** AI settings (`/settings/ai` has no
-  page, so a provider cannot be configured from the browser), targets, editing or
-  deleting a program, entering a program's URL or reward info, editing a finding's
-  description, deleting a finding, re-running triage.
-- **Scans are lost on reload.** The job id lives in component state and there is no
-  list-scans endpoint, so there is no scan history.
-- **Bugs:**
-  1. When every target is out of scope the backend answers 422 with `rejected_targets`
-     at the top level of the body; `ReconDashboard` reads `detail.rejected_targets`
-     (the test mocks that wrong shape), so the user sees "Failed to start scan" and no
-     list of rejected targets.
-  2. Triage scores are 0–100 (`AITriageService`); the UI treats them as 0–1 and colours
-     everything from 0.7 up red.
-  3. Mutation failures are silent: no component has an error path for create/update/delete.
-  4. Two `ApiError` classes (`lib/api.ts`, `lib/api-client.ts`); only one redirects on 401,
-     and it is not the one the feature pages use, so an expired session shows as
-     "Failed to load".
-  5. The chosen program is component state: it resets on every navigation.
-  6. `ProgramDetail` renders `program.url` as an `href` without checking the scheme.
-  7. The assets API does not expose `ai_label` / `ai_reason`, so the UI cannot show why
-     something was ranked.
+What was checked on 2026-10-11 (running stack probed signed-out, code read; no test
+suite was run):
 
-Open work is in the backlog (9 tasks). Nothing above has been reproduced in a browser;
-it comes from reading the code.
+- **API docs are public.** `/api/backend/docs` and `/api/backend/openapi.json` answer 200
+  through the frontend, so the whole API surface would be published by the tunnel.
+- **No login throttling**, no security headers on any response, `X-Powered-By` is sent.
+- **Recon can be aimed at the host's own network.** `ScopeValidator` only applies the
+  user's rules; nothing refuses `127.0.0.1`, `169.254.169.254`, a LAN range or the compose
+  hostnames (`backend`, `postgres`, `redis`), and `HttpFetcher` never looks at what a
+  hostname resolves to. Once the app is public, a stolen session could use it to probe
+  the laptop's LAN.
+- **Containers run as root**, all services share one network, and the frontend is
+  published on every interface.
+- `JWT_SECRET` falls back to `change-me` if unset; `APP_ENV` is `development` in compose.
+- Validation errors (422) echo the submitted value back in `input`, a password included.
+- By reading the schemas, no route returns a password hash, a JWT or an AI credential:
+  login returns `{id, email}`, `/settings/ai` returns `*_set` flags. Nothing enforces
+  this for future routes; there is no test that sweeps every response.
+- `frontend` never reads `NEXT_PUBLIC_API_URL`, yet the Dockerfile bakes it in.
+- `cloudflared` is installed on the host (`/usr/local/bin/cloudflared`); the stack will
+  run it as a container instead, so it starts and stops with the stack.
+
+Open work is in the backlog (7 tasks).
 
 ## 4. Architecture
 
@@ -175,6 +171,8 @@ One implementation, at `app/recon/scope.py`, based on the strict validator from
   current_stage, target_count, created_at, finished_at}` (`program_name` null if the
   program is gone).
 - `GET/PUT /settings/ai`, `POST /triage`, `/auth/{register,login,logout,me}`, `/health`.
+- `POST /auth/login` may answer 429 with `Retry-After` (§9.2). `/docs`, `/redoc` and
+  `/openapi.json` are closed. 422 items carry `type`, `loc`, `msg` only.
 - `GET /auth/status` (public) → `{"registration_open": bool}`: true only while the
   `users` table is empty. It returns nothing else (no email, no count).
 - `POST /auth/login` returns `{id, email}` and sets the JWT as an httpOnly cookie. The
@@ -287,7 +285,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Frontend: Next.js 14+, TypeScript, Tailwind, shadcn/ui, React Query, Vitest + RTL.
 - Recon: subfinder, httpx (ProjectDiscovery) binaries in worker image; JS crawler and
   secret scanner implemented as adapter classes.
-- Infra: Docker Compose (postgres, redis, backend, worker, frontend).
+- Infra: Docker Compose (postgres, redis, backend, worker, frontend, cloudflared).
 
 ## 6. Running & tests
 - **Up:** `cp infra/.env.example infra/.env` (set real values), then
@@ -309,6 +307,9 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Recon adapters never bypass `ScopeValidator`; scope matching lives in one module.
 - Every router except health and auth status/login/register depends on `get_current_user`.
 - Secrets/tokens stored only in the `settings` table (local), never logged or returned.
+- A new route must pass the response sweep (§9.6 DATA-3) and the route-protection test;
+  a new outbound request from the backend must go through `NetworkGuard` (§9.3).
+- Security checks never send a login to the user's instance and never trip its throttle.
 - **Integration workflow:** the default branch is `main`. Branch from it; before handing in, merge it into the branch and re-run
   the tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
   `backend/requirements.txt` are shared registration files — add lines, never rewrite
@@ -327,7 +328,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
   files are `*.env.example` with placeholders only; `infra/.env` is gitignored.
 - Plain fast-forward pushes only. No `--force`, no history rewriting.
 - The repo is public. A push happens only in a task whose description says so; the
-  UI pass (backlog tasks 1–9) does not push.
+  UI pass and the tunnel round (backlog tasks 1–7) do not push.
 
 ### Running on the user's laptop
 - On this host `docker` is **podman 5.4 emulating the Docker CLI**, with docker-compose
@@ -341,7 +342,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
   (`/home/liqued/agent-office/workspace/bountyhub/infra/.env`, mode 600, gitignored),
   generated once (`openssl rand -hex 32`) and reused, because the Postgres volume is
   initialised with that password. From a worktree, pass it with `--env-file`.
-- Published ports: frontend `3000` on all interfaces (the user may browse from another
+- Published ports (tunnel mode changes the frontend bind, §9.1): frontend `3000` on all interfaces (the user may browse from another
   machine on the LAN); backend `127.0.0.1:8000` only; Postgres and Redis are not
   published (host port 5432 is already taken by another service). The browser only
   ever talks to `:3000` — API calls go through the `/api/backend/*` rewrite.
@@ -363,7 +364,7 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 There is one laptop, one compose project, one running stack and one Postgres volume, so
 parallelism is limited by who may touch them.
 - Only one task at a time may run `up`, `down`, `build` or a volume wipe against project
-  `bountyhub`. In the current backlog that is task 9 only; tasks 1–8 never touch the stack.
+  `bountyhub`. In the current backlog that is task 7 only; tasks 1–6 never touch the stack.
 - A task running alongside them must not start, stop, rebuild or wipe the stack, and must
   not edit `infra/docker-compose.yml` or any Dockerfile. Read-only `ps` and `config` are
   fine.
@@ -413,3 +414,171 @@ parallelism is limited by who may touch them.
     the reserved `.invalid` TLD, so no real host can be reached even if a check is wrong.
   - It deletes the program it created, and never prints the password or the cookie. It
     cannot delete the user it registered; on a fresh stack that is done by `reset`.
+
+## 9. Public deployment & security
+
+### 9.1 Cloudflare Tunnel
+- `cloudflared` runs as a compose service; the only origin it is given is
+  `http://frontend:3000`. No inbound port is opened on the router or the host.
+- Two services, one per compose profile, same pinned image
+  (`docker.io/cloudflare/cloudflared:<release tag>`, never `latest`, `--no-autoupdate`,
+  `restart: unless-stopped`, no published ports):
+  - `tunnel` (profile `tunnel-quick`): `tunnel --no-autoupdate --url http://frontend:3000`.
+    Random `https://<words>.trycloudflare.com` URL, **new on every start of the
+    container**. Cloudflare offers quick tunnels without uptime guarantee and Cloudflare
+    Access cannot be put in front of them.
+  - `tunnel-named` (profile `tunnel-named`): `tunnel --no-autoupdate run` with
+    `TUNNEL_TOKEN` from `infra/.env`. Stable hostname (`PUBLIC_HOSTNAME`, set in the
+    Cloudflare dashboard to `http://frontend:3000`); Cloudflare Access (email one-time
+    PIN) is added in the dashboard and is the recommended setup.
+- **Networks:** `edge` (frontend, tunnel services) and `internal` (frontend, backend,
+  worker, postgres, redis). The tunnel container cannot reach backend, Postgres or Redis.
+- **Tunnel mode** is one key in `infra/.env`: `BOUNTYHUB_TUNNEL=on|off` (default off).
+  When it is on, every compose call made by `scripts/stack.sh` selects the profile
+  (`tunnel-named` if `TUNNEL_TOKEN` is non-empty, else `tunnel-quick`) and exports
+  `AUTH_COOKIE_SECURE=true` and `FRONTEND_BIND=127.0.0.1`. So in tunnel mode the app is
+  reached through the public HTTPS URL or `http://localhost:3000` on the laptop;
+  `http://<lan-ip>:3000` is closed (a `Secure` cookie would not work there anyway).
+- `scripts/stack.sh tunnel up | down | url | status`:
+  - `up` refuses unless the backend answers `registration_open: false` (a stranger must
+    never be able to claim the first account), sets `BOUNTYHUB_TUNNEL=on` by editing
+    that one line of the env file (nothing else, mode stays 600), runs `up -d` and
+    prints the URL.
+  - `url` prints `https://$PUBLIC_HOSTNAME` for a named tunnel, else the newest
+    `https://*.trycloudflare.com` found in the tunnel container's log (waits up to 30 s).
+  - `down` sets `off`, removes the tunnel container and recreates the frontend with the
+    LAN settings. `urls` also prints the public URL while the tunnel is on.
+- Ports: frontend `${FRONTEND_BIND:-0.0.0.0}:3000`, backend `127.0.0.1:8000`, Postgres and
+  Redis unpublished. Compose sets `APP_ENV=${APP_ENV:-production}`.
+- Containers: frontend, backend and worker run as a non-root user;
+  `security_opt: ["no-new-privileges:true"]` on frontend, backend, worker and the tunnel
+  services; `cap_drop: [ALL]` on frontend, backend and tunnel. Postgres and Redis keep
+  their image defaults.
+- After a host reboot podman does not restart containers by itself: `scripts/stack.sh up`
+  brings everything back, tunnel included (a quick tunnel gets a new URL).
+
+### 9.2 Backend hardening
+- **Docs closed:** `docs_url`, `redoc_url` and `openapi_url` are `None` unless
+  `EXPOSE_DOCS=true` (default false). `app.openapi()` still works in tests.
+- **Login throttle** (`app/services/login_throttle.py`, class `LoginThrottle`, in-process,
+  injectable clock, one instance on `app.state`): 5 failed logins per client within 15
+  minutes → `429 {"detail": "Too many login attempts. Try again later."}` with
+  `Retry-After`; while locked out a correct password is also 429 (checked before the
+  hash is verified). A success clears that client's count. A global ceiling of 50
+  failures per 15 minutes across all clients answers 429 to everyone until the window
+  moves on. Client key: `CF-Connecting-IP`, else the last hop of `X-Forwarded-For`, else
+  the peer address (port 8000 is reachable only from the frontend and localhost).
+  Settings: `login_max_failures`, `login_window_seconds`, `login_global_max_failures`.
+- Unknown email and wrong password give the same 401 body and both spend one argon2
+  verification (no account enumeration by timing).
+- **Secret check at start:** when `APP_ENV` is not `development`, the app refuses to
+  start if `JWT_SECRET` is shorter than 32 characters or starts with `change-me`.
+- **Errors:** unhandled exceptions → `500 {"detail": "Internal server error"}` (trace in
+  the server log only). Validation errors keep FastAPI's 422 list but each item carries
+  only `type`, `loc`, `msg` (no `input`, no `ctx`). No response contains a stack trace,
+  a file path or SQL.
+- **Headers on every backend response:** `X-Content-Type-Options: nosniff`,
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`.
+- **No CORS middleware.** The browser only talks to the frontend origin; the backend
+  never sends `Access-Control-Allow-Origin`.
+- **Credentials never leave:** no response body carries a password, a password hash, a
+  JWT, a Claude token or an API key; the JWT exists only in the login `Set-Cookie`.
+  `openai_base_url` must be an `http(s)` URL (it may point at a local model on purpose).
+- Logs never contain a password, a token, a cookie or a request body.
+- Known limit, documented not fixed: sign-out clears the cookie but the JWT stays valid
+  until it expires (24 h); there is no server-side session list.
+
+### 9.3 Recon network guard
+A hard block that scope rules cannot switch off, in `app/recon/netguard.py`
+(`NetworkGuard`), used by `ReconService` and `HttpFetcher`. `ScopeValidator` stays the
+only place scope *matching* lives; the guard answers a different question: "is this
+address on a public network?".
+- Refused as targets, whatever the rules say: IP literals that are not globally routable
+  (loopback, RFC 1918, link-local incl. `169.254.169.254`, CGNAT `100.64.0.0/10`,
+  unique-local and link-local IPv6, IPv4-mapped IPv6 of any of these, unspecified,
+  multicast, reserved); `localhost`; single-label hostnames (`backend`, `postgres`);
+  names ending in `.local`, `.internal`, `.localhost`, `.lan`, `.home.arpa`.
+- Before a hostname reaches httpx, the JS crawler or the fetcher it is resolved through
+  an injectable `Resolver` (real one: `socket.getaddrinfo`, with timeout); if **any**
+  address is not public the host is dropped. A name that does not resolve is left to
+  the tool. `HttpFetcher` applies the same check to every redirect hop.
+- Dropped targets are recorded in `rejected_targets` with a reason starting
+  `blocked: private or internal address`. `POST /recon/scans` answers 422 as it does for
+  out-of-scope targets when nothing is left.
+- `RECON_ALLOW_PRIVATE_TARGETS` (default `false`) turns the guard off for a lab setup.
+  It is not set in compose.
+- Limit: `pd-httpx` resolves again itself, so a DNS record that changes between the
+  check and the probe is not covered.
+
+### 9.4 Frontend hardening
+- `next.config.mjs`: `poweredByHeader: false` and `headers()` on `/:path*`:
+  `Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;
+  connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+  object-src 'none'` (`'unsafe-eval'` added to `script-src` only when
+  `NODE_ENV !== "production"`), `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy: camera=(), microphone=(), geolocation=()`,
+  `Strict-Transport-Security: max-age=31536000`, `X-Robots-Tag: noindex, nofollow`.
+  `script-src` keeps `'unsafe-inline'` because Next's App Router and the theme script
+  need it without a per-request nonce; a nonce-based policy is future work.
+- `app/robots.ts` disallows everything.
+- **Same-origin check** in `middleware.ts` for `/api/*` (matcher extended; these paths
+  are never redirected to `/login`): a `POST`/`PUT`/`PATCH`/`DELETE` whose `Origin` host
+  differs from `X-Forwarded-Host` (else `Host`), or whose `Sec-Fetch-Site` is
+  `cross-site`, is answered `403 {"error": "Cross-origin request refused"}`. Requests
+  with neither header (scripts) pass.
+- `POST /api/auth/login`: body must be `{email: string, password: string}` or 400;
+  forwards `CF-Connecting-IP` and `X-Forwarded-For` to the backend; a backend 429 is
+  passed on as 429 with `Retry-After` and `{error: "Too many attempts. Try again in N
+  minutes."}`, which the login form shows.
+- Markdown never renders raw HTML, links are `http(s)`/`mailto` only, images come from
+  the same origin only (CSP). `/login?next=` accepts same-site paths only
+  (`safeNextPath`).
+
+### 9.5 Security checks (`scripts/security_check.py`, `docs/SECURITY_TESTS.md`)
+- `docs/SECURITY_TESTS.md` is the user-facing list: one row per case in §9.6 with what
+  is done, what is expected, and where it is automated (pytest file, Vitest file,
+  `security_check.py` check name, or "manual" with the exact command).
+- `scripts/security_check.py`: Python 3 standard library only, one `PASS`/`FAIL`/`SKIP`
+  line per check with the case id, exit 0 only when nothing failed.
+  - `--url` (frontend origin, default `http://localhost:3000`; also the public URL) or
+    `--backend-url` (FastAPI directly).
+  - `--mode signed-out` (default) is safe on the user's instance and on the public URL:
+    it never sends a login, and it posts to `/auth/register` (with an `.invalid` email)
+    only after `/auth/status` said registration is closed.
+  - `--mode full` needs `--email`/`--password` (or `SECURITY_EMAIL`/`SECURITY_PASSWORD`)
+    and is **only for a throwaway dev backend**: it registers or signs in, trips the
+    login throttle and stores sentinel AI credentials. It refuses to run against a host
+    other than `localhost`/`127.0.0.1` unless `--i-own-this-instance` is given.
+  - Hostnames it submits are under `.invalid`; it never starts a scan that could be
+    accepted and never prints a password, cookie or token.
+
+### 9.6 Security test cases
+| id | case | expected |
+|----|------|----------|
+| AUTH-1 | every route except `/health`, `/auth/status`, `/auth/register`, `/auth/login`, without the cookie | 401 |
+| AUTH-2 | JWT tampered, expired, signed with another secret, `alg: none`, garbage | 401 |
+| AUTH-3 | `POST /auth/register` when an account exists | 403, no account created |
+| AUTH-4 | 6th failed login from one client within 15 min; then the correct password; another client; global ceiling | 429 + `Retry-After`; 429; unaffected; 429 |
+| AUTH-5 | login response | body `{id, email}` only; cookie `HttpOnly`, `SameSite=Lax`, `Secure` in tunnel mode |
+| AUTH-6 | unknown email vs wrong password | identical 401 body |
+| AUTH-7 | app start with `APP_ENV=production` and a weak `JWT_SECRET` | refuses to start |
+| DATA-1 | `GET`/`PUT /settings/ai` with credentials stored | only `*_set` flags, never a value |
+| DATA-2 | `/auth/me`, `/auth/status`, register and login bodies | no hash, no user count |
+| DATA-3 | sweep: sentinel password and AI credentials stored, every `GET` route called signed in | no sentinel, no `$argon2`, no JWT in any body |
+| DATA-4 | secret-scanner assets | only the redacted preview |
+| DATA-5 | 404, 405, 422 and a forced 500 | no trace, path, SQL or echoed `input` |
+| DATA-6 | any API response | `Cache-Control: no-store`, `nosniff` |
+| EXP-1 | host listeners and compose networks | 3000 and 8000 on `127.0.0.1` only in tunnel mode, no 5432/6379; tunnel container on `edge` only |
+| EXP-2 | `/api/backend/docs`, `/redoc`, `/openapi.json` (local and public URL) | 404 |
+| EXP-3 | container users and options | frontend, backend, worker non-root; `no-new-privileges` |
+| HDR-1 | any page | CSP, HSTS, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, no `X-Powered-By` |
+| HDR-2 | request with a foreign `Origin` | no `Access-Control-Allow-Origin`; unsafe method → 403 |
+| SSRF-1 | scan target `127.0.0.1`, `10.0.0.5`, `169.254.169.254`, `[::1]`, `localhost`, `backend`, with an in-scope rule covering it | rejected, no tool invoked |
+| SSRF-2 | in-scope hostname resolving to a private address; redirect to one | dropped before httpx/fetch; redirect not followed |
+| INJ-1 | program URL `javascript:…` | not rendered as a link |
+| INJ-2 | note with `<script>`, `<img onerror>`, a `javascript:` link | rendered as text, link removed |
+| INJ-3 | `/login?next=//evil.example` and `next=https://evil.example` | lands on `/` |
+| SEC-1 | git history, tracked files, container logs, `.next/static` | no secret; `infra/.env` untracked, mode 600 |
+| REC-1 | `scripts/stack.sh restart` in tunnel mode | tunnel back, `registration_open` still false, user count unchanged |
