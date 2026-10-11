@@ -1,6 +1,14 @@
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 
+/** Only http(s), mailto and relative/fragment URLs survive; everything else becomes empty. */
+export function safeUrl(url: string): string {
+  const trimmed = url.trim();
+  if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("//")) return "";
+  return trimmed;
+}
+
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div
@@ -10,6 +18,7 @@ export function Markdown({ children, className }: { children: string; className?
       )}
     >
       <ReactMarkdown
+        urlTransform={safeUrl}
         components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
         }}
