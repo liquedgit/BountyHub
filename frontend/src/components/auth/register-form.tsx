@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { PasswordInput } from "@/components/auth/password-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RegistrationClosedError, register } from "@/features/auth/api";
@@ -51,9 +52,9 @@ export function RegisterForm() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">Password</Label>
-        <Input
+        <PasswordInput
           id="password"
-          type="password"
+          
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
@@ -63,9 +64,9 @@ export function RegisterForm() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="confirm-password">Confirm password</Label>
-        <Input
+        <PasswordInput
           id="confirm-password"
-          type="password"
+          
           autoComplete="new-password"
           required
           value={confirm}

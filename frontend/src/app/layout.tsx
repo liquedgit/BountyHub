@@ -4,7 +4,7 @@ import { Providers } from "@/providers/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "BountyHub",
+  title: { default: "BountyHub", template: "%s · BountyHub" },
   description: "Bug-bounty management and authorized recon workspace",
 };
 
