@@ -14,7 +14,12 @@ from app.schemas.dashboard import (
 )
 
 RECENT_LIMIT = 5
-_CLOSED = (FindingStatus.DUPLICATE, FindingStatus.REJECTED, FindingStatus.RESOLVED, FindingStatus.PAID)
+_CLOSED = (
+    FindingStatus.DUPLICATE,
+    FindingStatus.REJECTED,
+    FindingStatus.RESOLVED,
+    FindingStatus.PAID,
+)
 _CREDENTIAL_KEY = {
     keys.PROVIDER_CLAUDE: keys.KEY_CLAUDE_TOKEN,
     keys.PROVIDER_OPENAI: keys.KEY_OPENAI_API_KEY,

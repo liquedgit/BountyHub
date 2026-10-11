@@ -28,7 +28,7 @@ def seed(db):
     db.add_all(
         [
             Target(program_id=prog.id, value="a.acme.com"),
-            Note(program_id=prog.id, title="n", body="b"),
+            Note(program_id=prog.id, title="n", body_md="b"),
         ]
     )
     spec = [
