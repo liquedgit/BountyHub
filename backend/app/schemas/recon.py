@@ -35,3 +35,5 @@ class ReconAssetRead(BaseModel):
     source: str | None
     meta: dict = Field(validation_alias="asset_metadata")
     triage_score: float | None = Field(validation_alias="ai_score")
+    triage_label: str | None = Field(validation_alias="ai_label")
+    triage_reason: str | None = Field(validation_alias="ai_reason")

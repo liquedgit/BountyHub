@@ -51,3 +51,8 @@ def test_every_non_exempt_route_requires_auth(client):
         url = path.replace("{", "").replace("}", "") if "{" in path else path
         resp = client.request(method, url)
         assert resp.status_code == 401, f"{method} {path} is not protected"
+
+
+def test_scan_history_and_dashboard_require_auth(client):
+    assert client.get("/recon/scans").status_code == 401
+    assert client.get("/dashboard/summary").status_code == 401

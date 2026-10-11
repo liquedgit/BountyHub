@@ -70,6 +70,9 @@ class ReconService:
             raise NotFoundError("scan")
         return job
 
+    def list_jobs(self, program_id: int | None = None, limit: int = 20) -> list[ReconJob]:
+        return self._jobs.list(program_id=program_id, limit=limit)
+
     def list_assets(self, job_id: int):
         self.get_job(job_id)
         return self._assets.list_by_job(job_id)
