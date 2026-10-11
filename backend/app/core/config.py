@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     subfinder_bin: str = "subfinder"
     httpx_bin: str = "pd-httpx"
     recon_tool_timeout: int = 300
+    recon_allow_private_targets: bool = False
 
 
 @lru_cache

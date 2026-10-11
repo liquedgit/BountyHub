@@ -42,6 +42,14 @@ def host(value):
     return ReconAssetResult(AssetType.HOST, value, "httpx", {"status_code": 200})
 
 
+@pytest.fixture(autouse=True)
+def no_real_dns(monkeypatch):
+    """Default guards must never hit real DNS: every name resolves to a public address."""
+    from app.recon.netguard import SystemResolver
+
+    monkeypatch.setattr(SystemResolver, "resolve", lambda self, host: ["93.184.216.34"])
+
+
 @pytest.fixture
 def program(db_session):
     p = Program(name="P")
