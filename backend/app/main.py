@@ -9,6 +9,7 @@ from app.api.bounty import router as bounty_router
 from app.api.dashboard import router as dashboard_router
 from app.api.recon import router as recon_router
 from app.core.config import check_secrets, get_settings
+from app.core.http import install_http_hardening
 from app.jobs.queue import ArqJobQueue, JobQueue
 from app.services.login_throttle import LoginThrottle
 
@@ -32,7 +33,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(job_queue: JobQueue | None = None) -> FastAPI:
     cfg = get_settings()
     check_secrets(cfg)
-    app = FastAPI(title=cfg.app_name, lifespan=lifespan)
+    docs = {} if cfg.expose_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    app = FastAPI(title=cfg.app_name, lifespan=lifespan, **docs)
+    install_http_hardening(app)
     app.state.login_throttle = LoginThrottle(
         cfg.login_max_failures,
         cfg.login_window_seconds,

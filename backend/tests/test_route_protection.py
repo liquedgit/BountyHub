@@ -56,3 +56,10 @@ def test_every_non_exempt_route_requires_auth(client):
 def test_scan_history_and_dashboard_require_auth(client):
     assert client.get("/recon/scans").status_code == 401
     assert client.get("/dashboard/summary").status_code == 401
+
+
+def test_docs_routes_are_not_mounted(client):
+    paths = {path for path, _ in _walk(create_app().routes)}
+    assert not paths & DOCS_PATHS
+    for path in DOCS_PATHS - {"/docs/oauth2-redirect"}:
+        assert client.get(path).status_code == 404
