@@ -8,6 +8,7 @@ from app.ai.base import AIProvider, AIProviderError
 from app.models.recon_job import ReconJob
 from app.recon.base import AssetType, Fetcher, ReconAssetResult, ReconTool
 from app.recon.js_crawler import JSEndpointCrawler
+from app.recon.netguard import NetworkGuard, blocked_entry, default_guard
 from app.recon.scope import ScopeValidator
 from app.recon.secret_scanner import SecretScanner
 from app.repositories.bounty import ProgramRepository, ScopeRuleRepository
@@ -28,7 +29,7 @@ class ScopeViolation(Exception):
 
 
 class ReconService:
-    """Owns the recon pipeline order: scope -> subfinder -> httpx -> js_crawler ->
+    """Owns the recon pipeline order: scope -> network guard -> subfinder -> httpx -> js_crawler ->
     secret_scanner -> triage.
 
     Every tool input is filtered through a ScopeValidator built from the program's
@@ -42,6 +43,7 @@ class ReconService:
         httpx: ReconTool,
         fetcher_factory: Callable[[ScopeValidator], Fetcher] | None = None,
         ai_provider_factory: Callable[[], AIProvider] | None = None,
+        guard: NetworkGuard | None = None,
     ):
         self._programs = ProgramRepository(db)
         self._rules = ScopeRuleRepository(db)
@@ -51,6 +53,7 @@ class ReconService:
         self._httpx = httpx
         self._fetcher_factory = fetcher_factory
         self._ai_provider_factory = ai_provider_factory
+        self._guard = guard or default_guard()
 
     def _validator(self, program_id: int) -> ScopeValidator:
         return ScopeValidator(self._rules.list_for_program(program_id))
@@ -60,9 +63,11 @@ class ReconService:
             raise NotFoundError("program")
         requested = _dedupe(t.strip() for t in targets if t and t.strip())
         allowed, rejected = self._validator(program_id).partition(requested)
+        rejected_names = [d.target for d in rejected]
+        allowed, blocked = self._guard.partition(allowed)
         if not allowed:
-            raise ScopeViolation([d.target for d in rejected])
-        return self._jobs.create(program_id, allowed, [d.target for d in rejected])
+            raise ScopeViolation([*rejected_names, *blocked])
+        return self._jobs.create(program_id, allowed, [*rejected_names, *blocked])
 
     def get_job(self, job_id: int) -> ReconJob:
         job = self._jobs.get(job_id)
@@ -93,29 +98,38 @@ class ReconService:
         self._jobs.mark_running(job, "scope")
         validator = self._validator(job.program_id)
         allowed, newly_rejected = validator.partition(job.targets)
-        rejected = _dedupe([*job.rejected_targets, *(d.target for d in newly_rejected)])
+        allowed, blocked = self._guard.partition(allowed)
+        rejected = _dedupe(
+            [*job.rejected_targets, *(d.target for d in newly_rejected), *blocked]
+        )
         job.rejected_targets = rejected
         if not allowed:
-            self._jobs.mark_finished(job, error="no targets are in scope")
+            self._jobs.mark_finished(job, error="no targets are in scope and public")
             return
         job.targets = list(allowed)
 
         self._jobs.set_stage(job, "subfinder")
         domains = [t for t in allowed if _is_bare_domain(t)]
         discovered = self._subfinder.run(domains) if domains else []
-        keep, dropped = _split_in_scope(validator, discovered)
+        keep, dropped = _split_in_scope(validator, discovered, self._guard)
         job.rejected_targets = _dedupe([*job.rejected_targets, *dropped])
         self._assets.bulk_add(job.id, keep)
 
         self._jobs.set_stage(job, "httpx")
-        probe_inputs = _dedupe([*allowed, *(r.value for r in keep)])
+        probe_inputs, probe_blocked = self._guard.partition(
+            _dedupe([*allowed, *(r.value for r in keep)])
+        )
+        job.rejected_targets = _dedupe([*job.rejected_targets, *probe_blocked])
         probed = self._httpx.run(probe_inputs)
-        probed_keep, probed_dropped = _split_in_scope(validator, probed)
+        probed_keep, probed_dropped = _split_in_scope(validator, probed, self._guard)
         job.rejected_targets = _dedupe([*job.rejected_targets, *probed_dropped])
         self._assets.bulk_add(job.id, probed_keep)
 
         if self._fetcher_factory is not None:
-            live = _dedupe(r.value for r in probed_keep if r.type == AssetType.HOST)
+            live, live_blocked = self._guard.partition(
+                _dedupe(r.value for r in probed_keep if r.type == AssetType.HOST)
+            )
+            job.rejected_targets = _dedupe([*job.rejected_targets, *live_blocked])
             fetcher = self._fetcher_factory(validator)
             for stage, tool_cls in (
                 ("js_crawler", JSEndpointCrawler),
@@ -166,13 +180,15 @@ def _is_bare_domain(target: str) -> bool:
 
 
 def _split_in_scope(
-    validator: ScopeValidator, results: list[ReconAssetResult]
+    validator: ScopeValidator, results: list[ReconAssetResult], guard: NetworkGuard
 ) -> tuple[list[ReconAssetResult], list[str]]:
     keep: list[ReconAssetResult] = []
     dropped: list[str] = []
     for r in results:
-        if validator.is_in_scope(r.value):
-            keep.append(r)
-        else:
+        if not validator.is_in_scope(r.value):
             dropped.append(r.value)
+        elif not guard.check(r.value):
+            dropped.append(blocked_entry(r.value))
+        else:
+            keep.append(r)
     return keep, dropped
