@@ -14,6 +14,7 @@ export interface Program {
   url: string | null;
   reward_info: string | null;
   created_at: string;
+  updated_at: string;
 }
 export interface ScopeRule {
   id: number;
@@ -31,6 +32,8 @@ export interface Finding {
   status: FindingStatus;
   severity: Severity;
   payout_cents: number | null;
+  created_at: string;
+  updated_at: string;
 }
 export interface Note {
   id: number;
@@ -38,6 +41,8 @@ export interface Note {
   title: string;
   body_md: string;
   finding_id: number | null;
+  created_at: string;
+  updated_at: string;
 }
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 export interface ReconJob {
@@ -60,4 +65,70 @@ export interface ReconAsset {
   source: string | null;
   meta: Record<string, unknown>;
   triage_score: number | null;
+  triage_label: string | null;
+  triage_reason: string | null;
+}
+
+export interface Target {
+  id: number;
+  program_id: number;
+  value: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface ScopeCheckResult {
+  host: string;
+  in_scope: boolean;
+  reason: string;
+}
+export type AIProvider = "claude" | "openai_compatible";
+export interface AISettings {
+  provider: AIProvider | string | null;
+  claude_token_set: boolean;
+  claude_model: string | null;
+  openai_base_url: string | null;
+  openai_api_key_set: boolean;
+  openai_model: string | null;
+}
+export interface AISettingsUpdate {
+  provider?: AIProvider | null;
+  claude_token?: string | null;
+  claude_model?: string | null;
+  openai_base_url?: string | null;
+  openai_api_key?: string | null;
+  openai_model?: string | null;
+}
+export interface DashboardSummary {
+  programs: number;
+  targets: number;
+  notes: number;
+  findings: {
+    total: number;
+    open: number;
+    by_status: Record<FindingStatus, number>;
+    by_severity: Record<Severity, number>;
+  };
+  payout_cents_paid: number;
+  scans: { total: number; active: number };
+  ai_configured: boolean;
+  recent_findings: {
+    id: number;
+    program_id: number;
+    program_name: string | null;
+    title: string;
+    severity: Severity;
+    status: FindingStatus;
+    updated_at: string;
+  }[];
+  recent_scans: {
+    id: number;
+    program_id: number;
+    program_name: string | null;
+    status: JobStatus;
+    current_stage: string | null;
+    target_count: number;
+    created_at: string;
+    finished_at: string | null;
+  }[];
 }
