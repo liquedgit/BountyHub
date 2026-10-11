@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.deps import get_auth_service, get_current_user
 from app.core.config import Settings, get_settings
@@ -9,6 +9,7 @@ from app.services.auth_service import (
     AuthService,
     RegistrationClosedError,
 )
+from app.services.login_throttle import TOO_MANY_DETAIL, LoginThrottle, client_key
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -28,15 +29,27 @@ def register(body: Credentials, service: AuthService = Depends(get_auth_service)
 
 @router.post("/login", response_model=UserOut)
 def login(
+    request: Request,
     body: Credentials,
     response: Response,
     service: AuthService = Depends(get_auth_service),
     settings: Settings = Depends(get_settings),
 ):
+    throttle: LoginThrottle = request.app.state.login_throttle
+    key = client_key(request)
+    wait = throttle.retry_after(key)
+    if wait is not None:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            TOO_MANY_DETAIL,
+            headers={"Retry-After": str(wait)},
+        )
     try:
         user, token = service.login(body.email, body.password)
     except AuthError:
+        throttle.record_failure(key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials") from None
+    throttle.record_success(key)
     response.set_cookie(
         settings.auth_cookie_name,
         token,

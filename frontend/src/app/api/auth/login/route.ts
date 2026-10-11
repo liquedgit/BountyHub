@@ -24,16 +24,44 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
+  const body = credentials as { email?: unknown; password?: unknown } | null;
+  if (
+    !body ||
+    typeof body !== "object" ||
+    typeof body.email !== "string" ||
+    typeof body.password !== "string"
+  ) {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  for (const name of ["cf-connecting-ip", "x-forwarded-for"]) {
+    const value = request.headers.get(name);
+    if (value) headers[name] = value;
+  }
+
   let upstream: Response;
   try {
     upstream = await fetch(`${API_INTERNAL_URL}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(credentials),
+      headers,
+      body: JSON.stringify({ email: body.email, password: body.password }),
       cache: "no-store",
     });
   } catch {
     return NextResponse.json({ error: "Backend unavailable" }, { status: 502 });
+  }
+
+  if (upstream.status === 429) {
+    const seconds = Number.parseInt(upstream.headers.get("retry-after") ?? "", 10);
+    const retryAfter = Number.isFinite(seconds) && seconds > 0 ? seconds : 60;
+    const minutes = Math.max(1, Math.ceil(retryAfter / 60));
+    return NextResponse.json(
+      {
+        error: `Too many attempts. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
+      },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
   }
 
   if (!upstream.ok) {
