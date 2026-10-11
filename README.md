@@ -87,6 +87,68 @@ You do not need to create any config by hand.
 6. **Start a scan** from the program's Recon page. Targets that fail the scope check are
    rejected before any tool runs; progress and results are polled from the job.
 
+## Public access (Cloudflare Tunnel)
+
+To reach the app from outside your LAN, run `cloudflared` as part of the stack. It makes an
+outbound connection to Cloudflare and forwards to `http://frontend:3000`; no router port
+is opened. The tunnel container sits on its own `edge` network and cannot reach the
+backend, Postgres or Redis.
+
+`scripts/stack.sh tunnel up` refuses to start unless your account is already registered
+(the backend must answer `registration_open: false`), so a stranger can never claim the
+first account. Register at <http://localhost:3000> first.
+
+### Quick tunnel (no account needed)
+
+```bash
+scripts/stack.sh tunnel up      # prints https://<random-words>.trycloudflare.com
+scripts/stack.sh tunnel url     # print it again
+scripts/stack.sh tunnel status
+scripts/stack.sh tunnel down    # back to LAN mode
+```
+
+The URL is new every time the tunnel container starts, and Cloudflare gives quick
+tunnels no uptime guarantee. Cloudflare Access cannot be put in front of a quick tunnel,
+so the app's own login is the only gate.
+
+### Named tunnel with Cloudflare Access (recommended)
+
+1. In the Cloudflare Zero Trust dashboard, open **Networks → Tunnels → Create a tunnel**
+   (type *Cloudflared*), name it, and copy the **token** from the install command.
+2. Add a **public hostname** to the tunnel, e.g. `hub.example.com`, with service type
+   `HTTP` and URL `frontend:3000`. The domain must be on your Cloudflare account.
+3. Put the token and hostname in `infra/.env`:
+
+   ```
+   TUNNEL_TOKEN=<token>
+   PUBLIC_HOSTNAME=hub.example.com
+   ```
+
+4. Under **Access → Applications**, add a *Self-hosted* application for the same
+   hostname, with a policy that allows only your email address and the *One-time PIN*
+   login method. Cloudflare then asks for an emailed code before anything reaches the app.
+5. Run `scripts/stack.sh tunnel up`. It prints `https://hub.example.com`.
+
+### What tunnel mode changes
+
+Tunnel mode is the `BOUNTYHUB_TUNNEL=on|off` line in `infra/.env`, which `tunnel up` and
+`tunnel down` edit (nothing else in the file is touched). While it is on, every
+`scripts/stack.sh` command:
+
+- starts the tunnel service (`tunnel-named` if `TUNNEL_TOKEN` is set, else `tunnel-quick`);
+- publishes the frontend on `127.0.0.1:3000` only, so `http://<lan-ip>:3000` stops
+  working; use the public URL, or `http://localhost:3000` on the laptop;
+- sets `AUTH_COOKIE_SECURE=true`, so the login cookie is only sent over HTTPS (it does not
+  work over plain `http://localhost` in this mode, use the public URL).
+
+`scripts/stack.sh urls` shows the public URL while the tunnel is on.
+
+### After a reboot
+
+Containers do not restart by themselves under podman. `scripts/stack.sh up` brings the
+stack back with the tunnel (the mode is stored in `infra/.env`). A quick tunnel gets a
+new URL; a named tunnel keeps its hostname.
+
 ## Scope rules
 
 Each program has `in` and `out` rules of type `domain`, `wildcard`, `ip` or `url`.
