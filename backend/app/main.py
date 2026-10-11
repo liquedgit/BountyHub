@@ -8,8 +8,9 @@ from app.api import auth, health, settings, triage
 from app.api.bounty import router as bounty_router
 from app.api.dashboard import router as dashboard_router
 from app.api.recon import router as recon_router
-from app.core.config import get_settings
+from app.core.config import check_secrets, get_settings
 from app.jobs.queue import ArqJobQueue, JobQueue
+from app.services.login_throttle import LoginThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(job_queue: JobQueue | None = None) -> FastAPI:
-    app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
+    cfg = get_settings()
+    check_secrets(cfg)
+    app = FastAPI(title=cfg.app_name, lifespan=lifespan)
+    app.state.login_throttle = LoginThrottle(
+        cfg.login_max_failures,
+        cfg.login_window_seconds,
+        cfg.login_global_max_failures,
+    )
     app.state.job_queue = job_queue
     app.include_router(health.router)
     app.include_router(auth.router)
