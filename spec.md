@@ -55,40 +55,33 @@ Out (future):
 
 ## 3. Current state (2026-10-11)
 
-Office tasks #1–#35 are merged. The UI pass is done and the `bountyhub` stack is running
-on the laptop. `main` is 26 commits ahead of `origin/main` (the UI pass was not pushed).
-`GET /auth/status` on the running stack answers `registration_open: false`: **the user
-has an account. The database is theirs, never reset it, never sign in on it.**
+Office tasks #1–#42 are merged. The hardening round is done and the app is deployed on a
+Cloudflare **quick tunnel**. Checked on the laptop on 2026-10-11 (read-only, signed-out):
 
-The user now wants the app reachable through **Cloudflare Tunnel**, hardened first, with
-a written list of security test cases. They accepted the proposed plan and test list
-without naming a domain, so the default is a **quick tunnel** (`*.trycloudflare.com`);
-a named tunnel with Cloudflare Access is supported as soon as they put a `TUNNEL_TOKEN`
-in `infra/.env` (§9).
+- All six services are up (`postgres`, `redis`, `backend`, `worker`, `frontend`,
+  `tunnel`); `scripts/stack.sh tunnel status` says `on (tunnel-quick)`.
+- The public URL answers: `/login` → 200 and `/api/backend/auth/status` →
+  `{"registration_open": false}`. **The user has an account. The database is theirs:
+  never reset it, never sign in on it.**
+- The frontend and backend containers run with `AUTH_COOKIE_SECURE=true`, the backend
+  with `APP_ENV=production`; frontend and backend are bound to `127.0.0.1`.
+- `docs/SECURITY_TESTS.md` records 24 of 25 cases passed. AUTH-5 on the live URL (the
+  `Secure` flag as a real browser sees it) is not run: it needs the user to sign in.
+- `main` is clean and **48 commits ahead of `origin/main`** (the UI pass and the tunnel
+  round). `origin/main` has nothing that `main` lacks, so the push is a fast-forward.
+  `gh` is logged in as `liquedgit` with `repo` scope; the GitHub repo is **public**.
 
-What was checked on 2026-10-11 (running stack probed signed-out, code read; no test
-suite was run):
+**Where the app is reached**
+- Public: the quick-tunnel URL printed by `scripts/stack.sh tunnel url`
+  (`https://<random-words>.trycloudflare.com`). It is not a domain the user owns and it
+  **changes whenever the tunnel container is recreated** (`tunnel down`/`up`, a rebuild,
+  a reboot). It is not written to any tracked file (§7).
+- On the laptop: `http://localhost:3000`. The LAN address is closed while the tunnel is on.
+- A fixed address (e.g. `bounty.example.com`) needs a domain on the user's Cloudflare
+  account and a named-tunnel `TUNNEL_TOKEN` in `infra/.env` (§9.1); Cloudflare Access can
+  then be put in front. The user has not named a domain, so this is not planned work.
 
-- **API docs are public.** `/api/backend/docs` and `/api/backend/openapi.json` answer 200
-  through the frontend, so the whole API surface would be published by the tunnel.
-- **No login throttling**, no security headers on any response, `X-Powered-By` is sent.
-- **Recon can be aimed at the host's own network.** `ScopeValidator` only applies the
-  user's rules; nothing refuses `127.0.0.1`, `169.254.169.254`, a LAN range or the compose
-  hostnames (`backend`, `postgres`, `redis`), and `HttpFetcher` never looks at what a
-  hostname resolves to. Once the app is public, a stolen session could use it to probe
-  the laptop's LAN.
-- **Containers run as root**, all services share one network, and the frontend is
-  published on every interface.
-- `JWT_SECRET` falls back to `change-me` if unset; `APP_ENV` is `development` in compose.
-- Validation errors (422) echo the submitted value back in `input`, a password included.
-- By reading the schemas, no route returns a password hash, a JWT or an AI credential:
-  login returns `{id, email}`, `/settings/ai` returns `*_set` flags. Nothing enforces
-  this for future routes; there is no test that sweeps every response.
-- `frontend` never reads `NEXT_PUBLIC_API_URL`, yet the Dockerfile bakes it in.
-- `cloudflared` is installed on the host (`/usr/local/bin/cloudflared`); the stack will
-  run it as a container instead, so it starts and stops with the stack.
-
-Open work is in the backlog (7 tasks).
+The user has now said **"push it"**. Open work is in the backlog (2 tasks).
 
 ## 4. Architecture
 
@@ -310,6 +303,9 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - A new route must pass the response sweep (§9.6 DATA-3) and the route-protection test;
   a new outbound request from the backend must go through `NetworkGuard` (§9.3).
 - Security checks never send a login to the user's instance and never trip its throttle.
+- The public tunnel URL is never written to a tracked file, a commit message or a GitHub
+  page: the repo is public and the URL leads to the user's own instance. Docs say
+  `scripts/stack.sh tunnel url`; the URL itself goes in the task report only.
 - **Integration workflow:** the default branch is `main`. Branch from it; before handing in, merge it into the branch and re-run
   the tests. `backend/app/main.py`, `backend/app/models/__init__.py` and
   `backend/requirements.txt` are shared registration files — add lines, never rewrite
@@ -327,8 +323,18 @@ asset_type, value, source, metadata, ai_score, ai_label, ai_reason), `settings`.
 - Because the repo is public, nothing secret may be in any pushed commit. Tracked env
   files are `*.env.example` with placeholders only; `infra/.env` is gitignored.
 - Plain fast-forward pushes only. No `--force`, no history rewriting.
-- The repo is public. A push happens only in a task whose description says so; the
-  UI pass and the tunnel round (backlog tasks 1–7) do not push.
+- The repo is public. A push happens only in a task whose description says so. The user
+  asked for the UI pass and the tunnel round to be published on 2026-10-11 (backlog
+  task 1); that approval covers `main` as it stands then, not later rounds.
+- **Before every push** the range `origin/main..main` is audited: the diff and every
+  tracked file are searched for secret patterns (private keys, `sk-`/`sk-ant-` keys,
+  JWTs, `TUNNEL_TOKEN`/`JWT_SECRET`/`POSTGRES_PASSWORD` with a real value, every value
+  found in `infra/.env`), for a `*.trycloudflare.com` hostname, and for the user's email,
+  LAN address or hostname. Test sentinels and `.env.example` placeholders are expected
+  and are named in the hand-in. A real hit stops the push; it is reported, never fixed by
+  rewriting history.
+- **After every push** a fresh clone is the proof: its `HEAD` equals local `main`, it
+  holds no `.env`, and the same search over the clone is clean.
 
 ### Running on the user's laptop
 - On this host `docker` is **podman 5.4 emulating the Docker CLI**, with docker-compose
