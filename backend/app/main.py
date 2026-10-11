@@ -9,6 +9,7 @@ from app.api.bounty import router as bounty_router
 from app.api.dashboard import router as dashboard_router
 from app.api.recon import router as recon_router
 from app.core.config import get_settings
+from app.core.http import install_http_hardening
 from app.jobs.queue import ArqJobQueue, JobQueue
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(job_queue: JobQueue | None = None) -> FastAPI:
-    app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
+    cfg = get_settings()
+    docs = {} if cfg.expose_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    app = FastAPI(title=cfg.app_name, lifespan=lifespan, **docs)
+    install_http_hardening(app)
     app.state.job_queue = job_queue
     app.include_router(health.router)
     app.include_router(auth.router)

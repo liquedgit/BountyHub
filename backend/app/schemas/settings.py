@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter, field_validator
 
 
 class AISettingsUpdate(BaseModel):
@@ -12,6 +12,13 @@ class AISettingsUpdate(BaseModel):
     openai_base_url: str | None = None
     openai_api_key: str | None = Field(default=None, min_length=1)
     openai_model: str | None = None
+
+    @field_validator("openai_base_url")
+    @classmethod
+    def _http_url(cls, v: str | None) -> str | None:
+        if v is not None:
+            TypeAdapter(AnyHttpUrl).validate_python(v)
+        return v
 
 
 class AISettingsResponse(BaseModel):

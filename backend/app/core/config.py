@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_name: str = "BountyHub"
     app_env: str = "development"
     database_url: str = "postgresql+psycopg2://bountyhub:bountyhub@localhost:5432/bountyhub"
+    expose_docs: bool = False
     redis_url: str = "redis://localhost:6379/0"
 
     jwt_secret: str = "change-me"
