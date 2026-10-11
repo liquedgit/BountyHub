@@ -205,6 +205,26 @@ def run(args, report: Report) -> None:
     if not report.check("GET /auth/me returns the user", ok, detail_of(status, payload)):
         raise Stop
 
+    status, payload, _ = client.request("GET", "/dashboard/summary")
+    report.check(
+        "GET /dashboard/summary has an integer programs count",
+        status == 200
+        and isinstance(payload, dict)
+        and isinstance(payload.get("programs"), int)
+        and not isinstance(payload.get("programs"), bool),
+        detail_of(status, payload),
+    )
+    status, payload, _ = client.request("GET", "/recon/scans")
+    report.check("GET /recon/scans returns a list", status == 200 and isinstance(payload, list),
+                 detail_of(status, payload))
+    if frontend:
+        status, payload, headers = client.request("GET", "/settings", raw=True)
+        report.check(
+            "/settings page answers 200 with the session cookie",
+            status == 200 and isinstance(payload, str) and "<html" in payload.lower(),
+            f"HTTP {status}, Location {headers.get('Location', '')!r}",
+        )
+
     status, payload, _ = client.request(
         "POST", "/programs", {"name": "smoke-test (safe to delete)"}
     )

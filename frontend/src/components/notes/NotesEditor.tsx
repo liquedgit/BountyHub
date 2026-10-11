@@ -168,10 +168,11 @@ export function NotesEditor({ programId }: { programId: number }) {
           <ul className="divide-y rounded-md border">
             {filtered.map((n) => (
               <li key={n.id}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   aria-current={n.id === selectedId ? "true" : undefined}
-                  className={`w-full p-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  className={`h-auto w-full flex-col items-stretch justify-start gap-0 whitespace-normal rounded-none p-2 text-left text-sm hover:bg-muted ${
                     n.id === selectedId ? "bg-muted font-semibold" : ""
                   }`}
                   onClick={() => n.id !== selectedId && go({ id: n.id })}
@@ -180,7 +181,7 @@ export function NotesEditor({ programId }: { programId: number }) {
                   <span className="block text-xs font-normal text-muted-foreground">
                     {formatRelative(n.updated_at)}
                   </span>
-                </button>
+                </Button>
               </li>
             ))}
           </ul>

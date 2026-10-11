@@ -145,13 +145,14 @@ export function FindingsBoard({ programId }: { programId: number }) {
                 <ul className="space-y-2">
                   {items.map((f) => (
                     <li key={f.id} className="rounded-md border bg-card p-3 text-sm">
-                      <button
+                      <Button
                         type="button"
-                        className="block w-full text-left font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        variant="ghost"
+                        className="block h-auto w-full whitespace-normal p-0 text-left font-medium hover:bg-transparent hover:underline"
                         onClick={() => setEditingId(f.id)}
                       >
                         {f.title}
-                      </button>
+                      </Button>
                       <div className="mt-2 flex items-center justify-between gap-2">
                         <SeverityBadge severity={f.severity} />
                         <span className="tabular-nums">{formatMoney(f.payout_cents)}</span>

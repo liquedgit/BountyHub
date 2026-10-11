@@ -129,12 +129,13 @@ export function ReconDashboard({ programId }: { programId: number }) {
           <ul className="divide-y rounded-lg border">
             {scans.data!.map((s) => (
               <li key={s.id}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => selectScan(s.id)}
                   aria-current={s.id === scanId ? "true" : undefined}
                   className={cn(
-                    "flex w-full flex-wrap items-center gap-3 px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "h-auto w-full flex-wrap justify-start gap-3 whitespace-normal rounded-none px-3 py-2 text-left text-sm hover:bg-muted",
                     s.id === scanId && "bg-muted",
                   )}
                 >
@@ -144,7 +145,7 @@ export function ReconDashboard({ programId }: { programId: number }) {
                     {s.targets.length} {s.targets.length === 1 ? "target" : "targets"}
                   </span>
                   <span className="ml-auto text-muted-foreground">{formatRelative(s.created_at)}</span>
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
